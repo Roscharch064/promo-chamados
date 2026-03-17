@@ -50,17 +50,32 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     }
 
     setIsProcessing(true);
-    // Simulate AI processing (will be replaced by edge function call)
-    await new Promise((r) => setTimeout(r, 1500));
-
-    const titulo = `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
-    setAiResult({
-      titulo,
-      descricaoFormatada: descricao,
-      prioridade: tipo === "bug" ? "High" : "Medium",
-    });
-    setIsProcessing(false);
-    toast.success("Chamado formatado pela IA!");
+    try {
+      const { data, error } = await supabase.functions.invoke("format-chamado", {
+        body: { descricao, tipo, modulo },
+      });
+      if (error) throw error;
+      setAiResult({
+        titulo: data.titulo,
+        descricaoFormatada: data.descricao_formatada || descricao,
+        prioridade: data.prioridade || "Medium",
+      });
+      if (data.modulo_inferido && !modulo) {
+        setModulo(data.modulo_inferido);
+      }
+      toast.success("Chamado formatado pela IA!");
+    } catch (err) {
+      console.error(err);
+      // Fallback: format locally
+      setAiResult({
+        titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`,
+        descricaoFormatada: descricao,
+        prioridade: tipo === "bug" ? "High" : "Medium",
+      });
+      toast.info("Formatação local aplicada (IA indisponível)");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSubmit = async () => {
