@@ -14,7 +14,105 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      chamados: {
+        Row: {
+          aberto_por_email: string | null
+          cliente_empresa: string | null
+          cliente_nome: string | null
+          cliente_telefone: string | null
+          created_at: string
+          descricao: string | null
+          id: string
+          jira_key: string | null
+          modulo: string | null
+          origem: Database["public"]["Enums"]["origem_chamado"]
+          prioridade: string | null
+          rd_conversa_id: string | null
+          relator_account_id: string | null
+          relator_nome: string
+          status_jira: string | null
+          tipo: Database["public"]["Enums"]["tipo_chamado"]
+          titulo: string
+          updated_at: string
+        }
+        Insert: {
+          aberto_por_email?: string | null
+          cliente_empresa?: string | null
+          cliente_nome?: string | null
+          cliente_telefone?: string | null
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          jira_key?: string | null
+          modulo?: string | null
+          origem?: Database["public"]["Enums"]["origem_chamado"]
+          prioridade?: string | null
+          rd_conversa_id?: string | null
+          relator_account_id?: string | null
+          relator_nome: string
+          status_jira?: string | null
+          tipo: Database["public"]["Enums"]["tipo_chamado"]
+          titulo: string
+          updated_at?: string
+        }
+        Update: {
+          aberto_por_email?: string | null
+          cliente_empresa?: string | null
+          cliente_nome?: string | null
+          cliente_telefone?: string | null
+          created_at?: string
+          descricao?: string | null
+          id?: string
+          jira_key?: string | null
+          modulo?: string | null
+          origem?: Database["public"]["Enums"]["origem_chamado"]
+          prioridade?: string | null
+          rd_conversa_id?: string | null
+          relator_account_id?: string | null
+          relator_nome?: string
+          status_jira?: string | null
+          tipo?: Database["public"]["Enums"]["tipo_chamado"]
+          titulo?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      mapeamento_usuarios: {
+        Row: {
+          account_id_jira: string | null
+          ativo: boolean
+          created_at: string
+          email: string
+          id: string
+          nome: string
+          telefone_whatsapp: string | null
+          tipo: Database["public"]["Enums"]["tipo_usuario"]
+          updated_at: string
+        }
+        Insert: {
+          account_id_jira?: string | null
+          ativo?: boolean
+          created_at?: string
+          email: string
+          id?: string
+          nome: string
+          telefone_whatsapp?: string | null
+          tipo: Database["public"]["Enums"]["tipo_usuario"]
+          updated_at?: string
+        }
+        Update: {
+          account_id_jira?: string | null
+          ativo?: boolean
+          created_at?: string
+          email?: string
+          id?: string
+          nome?: string
+          telefone_whatsapp?: string | null
+          tipo?: Database["public"]["Enums"]["tipo_usuario"]
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +121,9 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      origem_chamado: "app_direto" | "rd_conversas"
+      tipo_chamado: "bug" | "melhoria" | "solicitacao"
+      tipo_usuario: "franqueado" | "suporte" | "gestor"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +250,10 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      origem_chamado: ["app_direto", "rd_conversas"],
+      tipo_chamado: ["bug", "melhoria", "solicitacao"],
+      tipo_usuario: ["franqueado", "suporte", "gestor"],
+    },
   },
 } as const
