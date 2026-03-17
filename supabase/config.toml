@@ -1,0 +1,4 @@
+project_id = "blqikxdtbdbfqjrdevcy"
+
+[functions.format-chamado]
+verify_jwt = false
