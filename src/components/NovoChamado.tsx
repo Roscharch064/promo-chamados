@@ -9,6 +9,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useCreateChamado, useUsuarios } from "@/hooks/usePromoBank";
 import { Sparkles, Loader2, Send } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useCreateChamado, useUsuarios } from "@/hooks/usePromoBank";
+import { Sparkles, Loader2, Send } from "lucide-react";
+import { toast } from "sonner";
 
 const MODULOS = [
   "Login", "Cadastros", "Consultas", "Relatórios", "Dashboard",
