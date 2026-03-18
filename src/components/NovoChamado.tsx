@@ -60,7 +60,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
       toast.success("Chamado formatado pela IA!");
     } catch (err) {
       console.error(err);
-      // Fallback: format locally
       setAiResult({
         titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`,
         descricaoFormatada: descricao,
@@ -95,7 +94,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         origem: "app_direto",
       });
 
-      // Try to create Jira issue if user has Jira credentials
+      // Criar issue no Jira se o usuário tiver credenciais
       if (relator.jira_email && relator.jira_api_token) {
         try {
           const { data: jiraData, error: jiraError } = await supabase.functions.invoke("create-jira-issue", {
@@ -103,8 +102,9 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               titulo,
               descricao: descFormatada,
               tipo,
-              prioridade,
+              // prioridade removida — o SPROMO usa a padrão do projeto
               relator_nome: relator.nome,
+              relator_account_id: relator.account_id_jira,
               jira_email: relator.jira_email,
               jira_api_token: relator.jira_api_token,
               modulo: modulo || null,
@@ -113,7 +113,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
 
           if (jiraError) throw jiraError;
 
-          // Update chamado with Jira key
           if (jiraData?.jira_key) {
             await supabase
               .from("chamados")
