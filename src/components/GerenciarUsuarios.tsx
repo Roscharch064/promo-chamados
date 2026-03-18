@@ -48,7 +48,7 @@ const GerenciarUsuarios = () => {
       });
       toast.success("Usuário cadastrado!");
       setOpen(false);
-      setForm({ nome: "", tipo: "franqueado", telefone_whatsapp: "", email: "", account_id_jira: "" });
+      setForm({ nome: "", tipo: "franqueado", telefone_whatsapp: "", email: "", account_id_jira: "", jira_email: "", jira_api_token: "" });
     } catch {
       toast.error("Erro ao cadastrar usuário");
     }
