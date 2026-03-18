@@ -27,6 +27,8 @@ const GerenciarUsuarios = () => {
     telefone_whatsapp: "",
     email: "",
     account_id_jira: "",
+    jira_email: "",
+    jira_api_token: "",
   });
 
   const handleSubmit = async () => {
