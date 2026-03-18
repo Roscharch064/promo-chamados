@@ -112,6 +112,14 @@ const GerenciarUsuarios = () => {
                 <Label>Account ID Jira</Label>
                 <Input value={form.account_id_jira} onChange={(e) => setForm({ ...form, account_id_jira: e.target.value })} placeholder="Opcional" />
               </div>
+              <div className="space-y-2">
+                <Label>Email Jira</Label>
+                <Input value={form.jira_email} onChange={(e) => setForm({ ...form, jira_email: e.target.value })} placeholder="email@datweb.com.br" type="email" />
+              </div>
+              <div className="space-y-2">
+                <Label>API Token Jira</Label>
+                <Input value={form.jira_api_token} onChange={(e) => setForm({ ...form, jira_api_token: e.target.value })} placeholder="Token de API do Atlassian" type="password" />
+              </div>
               <Button onClick={handleSubmit} disabled={createUsuario.isPending} className="w-full">
                 {createUsuario.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Cadastrar"}
               </Button>
