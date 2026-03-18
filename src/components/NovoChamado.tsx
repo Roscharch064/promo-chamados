@@ -80,19 +80,55 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     }
 
     const titulo = aiResult?.titulo ?? `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
+    const descFormatada = aiResult?.descricaoFormatada ?? descricao;
+    const prioridade = aiResult?.prioridade ?? "Medium";
 
     try {
-      await createChamado.mutateAsync({
+      const chamado = await createChamado.mutateAsync({
         tipo,
         titulo,
-        descricao: aiResult?.descricaoFormatada ?? descricao,
+        descricao: descFormatada,
         modulo: modulo || null,
         relator_nome: relator.nome,
         relator_account_id: relator.account_id_jira,
-        prioridade: aiResult?.prioridade ?? "Medium",
+        prioridade,
         origem: "app_direto",
       });
-      toast.success("Chamado criado com sucesso!");
+
+      // Try to create Jira issue if user has Jira credentials
+      if (relator.jira_email && relator.jira_api_token) {
+        try {
+          const { data: jiraData, error: jiraError } = await supabase.functions.invoke("create-jira-issue", {
+            body: {
+              titulo,
+              descricao: descFormatada,
+              tipo,
+              prioridade,
+              relator_nome: relator.nome,
+              jira_email: relator.jira_email,
+              jira_api_token: relator.jira_api_token,
+              modulo: modulo || null,
+            },
+          });
+
+          if (jiraError) throw jiraError;
+
+          // Update chamado with Jira key
+          if (jiraData?.jira_key) {
+            await supabase
+              .from("chamados")
+              .update({ jira_key: jiraData.jira_key, status_jira: "Aberto" })
+              .eq("id", chamado.id);
+            toast.success(`Chamado criado e issue ${jiraData.jira_key} aberta no Jira!`);
+          }
+        } catch (jiraErr) {
+          console.error("Erro ao criar issue no Jira:", jiraErr);
+          toast.warning("Chamado criado, mas houve erro ao abrir issue no Jira");
+        }
+      } else {
+        toast.success("Chamado criado! (sem credenciais Jira configuradas para o relator)");
+      }
+
       setDescricao("");
       setAiResult(null);
       setModulo("");

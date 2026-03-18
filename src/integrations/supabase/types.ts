@@ -84,6 +84,8 @@ export type Database = {
           created_at: string
           email: string
           id: string
+          jira_api_token: string | null
+          jira_email: string | null
           nome: string
           telefone_whatsapp: string | null
           tipo: Database["public"]["Enums"]["tipo_usuario"]
@@ -95,6 +97,8 @@ export type Database = {
           created_at?: string
           email: string
           id?: string
+          jira_api_token?: string | null
+          jira_email?: string | null
           nome: string
           telefone_whatsapp?: string | null
           tipo: Database["public"]["Enums"]["tipo_usuario"]
@@ -106,6 +110,8 @@ export type Database = {
           created_at?: string
           email?: string
           id?: string
+          jira_api_token?: string | null
+          jira_email?: string | null
           nome?: string
           telefone_whatsapp?: string | null
           tipo?: Database["public"]["Enums"]["tipo_usuario"]
