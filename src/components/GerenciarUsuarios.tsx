@@ -43,6 +43,8 @@ const GerenciarUsuarios = () => {
         telefone_whatsapp: form.telefone_whatsapp || null,
         email: form.email,
         account_id_jira: form.account_id_jira || null,
+        jira_email: form.jira_email || null,
+        jira_api_token: form.jira_api_token || null,
       });
       toast.success("Usuário cadastrado!");
       setOpen(false);
