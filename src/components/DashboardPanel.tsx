@@ -1,14 +1,18 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { useChamados } from "@/hooks/usePromoBank";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   TicketCheck, Bug, Lightbulb, ClipboardList,
   Clock, CheckCircle2, AlertCircle, TrendingUp,
-  ExternalLink, MessageSquare
+  ExternalLink, MessageSquare, Download, Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 
 const STATUS_COLORS: Record<string, string> = {
   "Aberto": "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
@@ -18,9 +22,46 @@ const STATUS_COLORS: Record<string, string> = {
   "Concluído": "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 };
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+
 const DashboardPanel = () => {
   const { data: chamados, isLoading } = useChamados();
   const { canEditChamados } = useAuth();
+  const qc = useQueryClient();
+  const [isImporting, setIsImporting] = useState(false);
+
+  const handleImportarJira = async () => {
+    setIsImporting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Busca o account_id e email do usuário logado
+      const { data: usuario } = await supabase
+        .from("mapeamento_usuarios")
+        .select("account_id_jira, email")
+        .eq("email", session?.user?.email ?? "")
+        .single();
+
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          account_id: usuario?.account_id_jira ?? null,
+          email: session?.user?.email ?? null,
+        }),
+      });
+
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error ?? "Erro desconhecido");
+
+      qc.invalidateQueries({ queryKey: ["chamados"] });
+      toast.success(result.mensagem ?? `${result.importados} chamados importados!`);
+    } catch (err: any) {
+      toast.error(`Erro ao importar: ${err?.message ?? "erro desconhecido"}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const stats = useMemo(() => {
     if (!chamados) return null;
@@ -99,9 +140,22 @@ const DashboardPanel = () => {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground">Painel de Controle</h2>
-        <p className="text-muted-foreground text-sm mt-1">Visão geral dos chamados do PromoBank</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Painel de Controle</h2>
+          <p className="text-muted-foreground text-sm mt-1">Visão geral dos chamados do PromoBank</p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleImportarJira}
+          disabled={isImporting}
+          className="gap-2"
+          title="Importar meus chamados do Jira"
+        >
+          {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+          {isImporting ? "Importando..." : "Importar do Jira"}
+        </Button>
       </div>
 
       {/* Cards de métricas */}
