@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns,
+  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns, Paperclip,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -167,6 +167,29 @@ const ChamadoCard = ({
                     <p className="text-xs text-foreground line-clamp-2">{com.texto}</p>
                   </div>
                 ))}
+              </div>
+            )}
+            {/* Evidências */}
+            {Array.isArray((c as any).evidencias) && (c as any).evidencias.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                  <Paperclip className="h-3 w-3" /> Evidências ({(c as any).evidencias.length})
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {(c as any).evidencias.map((ev: any, ei: number) => (
+                    ev.tipo?.startsWith("image/") ? (
+                      <a key={ei} href={ev.url} target="_blank" rel="noopener noreferrer">
+                        <img src={ev.url} alt={ev.nome} className="h-16 w-16 object-cover rounded border border-border hover:opacity-80 transition-opacity" />
+                      </a>
+                    ) : (
+                      <a key={ei} href={ev.url} target="_blank" rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-xs text-primary hover:underline bg-muted/50 px-2 py-1.5 rounded border border-border">
+                        <Paperclip className="h-3 w-3 shrink-0" />
+                        <span className="truncate max-w-[120px]">{ev.nome}</span>
+                      </a>
+                    )
+                  ))}
+                </div>
               </div>
             )}
           </motion.div>
