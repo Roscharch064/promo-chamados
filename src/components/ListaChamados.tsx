@@ -430,9 +430,16 @@ const ListaChamados = () => {
         {/* MODO KANBAN */}
         {viewMode === "kanban" && (
           <motion.div key="kanban" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            <div className="flex gap-3 overflow-x-auto pb-4">
+            {/* Mobile: scroll horizontal suave com snap. Desktop: grid adaptativo */}
+            <div className="
+              flex gap-3 pb-4
+              overflow-x-auto scroll-smooth snap-x snap-mandatory
+              sm:grid sm:grid-cols-2 sm:overflow-x-visible
+              lg:grid-cols-3
+              xl:grid-cols-5
+            ">
               {kanbanColunas.map(({ status, chamados: cols }) => (
-                <div key={status} className="flex-shrink-0 w-72">
+                <div key={status} className="flex-shrink-0 w-[80vw] snap-start sm:w-auto">
                   {/* Header da coluna */}
                   <div className={`flex items-center justify-between p-3 rounded-t-lg border-t-2 border-x ${STATUS_HEADER_COLORS[status]}`}>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[status]}`}>{status}</span>
@@ -440,8 +447,8 @@ const ListaChamados = () => {
                       {cols.length}
                     </span>
                   </div>
-                  {/* Cards da coluna */}
-                  <div className={`border-x border-b rounded-b-lg p-2 space-y-2 min-h-[200px] ${STATUS_HEADER_COLORS[status]} bg-opacity-30`}>
+                  {/* Cards */}
+                  <div className={`border-x border-b rounded-b-lg p-2 space-y-2 min-h-[120px] ${STATUS_HEADER_COLORS[status]} bg-opacity-30`}>
                     {cols.length === 0 && (
                       <p className="text-xs text-muted-foreground text-center py-6 opacity-60">Nenhum chamado</p>
                     )}
