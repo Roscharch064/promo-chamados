@@ -95,7 +95,7 @@ const ChamadoCard = ({
             )}
             <div className="flex items-center gap-0.5">
               {c.jira_key && (
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onSync(c.id, c.jira_key)} disabled={isSyncing} title="Sincronizar">
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onSync(c.id, c.jira_key)} disabled={isSyncing} title="Sincronizar com Jira">
                   <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
                 </Button>
               )}
@@ -212,7 +212,6 @@ const ListaChamados = () => {
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   const lastSyncRef = useRef<number>(0);
   const [editForm, setEditForm] = useState({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
 
@@ -237,6 +236,7 @@ const ListaChamados = () => {
     }));
   }, [chamadosFiltrados]);
 
+  // Sincroniza um chamado individual e recarrega a lista
   const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
     if (!jiraKey) return;
     setSyncingId(chamadoId);
@@ -244,35 +244,70 @@ const ListaChamados = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({ chamado_id: chamadoId }),
       });
       const result = await res.json();
-      if (!res.ok) { if (!silent) toast.error(`Falha ao sincronizar: ${result.error ?? "erro"}`); }
-      else { qc.invalidateQueries({ queryKey: ["chamados"] }); if (!silent) toast.success("Sincronizado!"); }
-    } catch (err: any) { if (!silent) toast.error(`Erro: ${err?.message}`); }
-    finally { setSyncingId(null); }
-  }, [qc]);
+      if (!res.ok) {
+        if (!silent) toast.error(`Falha ao sincronizar: ${result.error ?? "erro"}`);
+      } else {
+        // Aguarda invalidação e refetch completo antes de continuar
+        await qc.invalidateQueries({ queryKey: ["chamados"] });
+        await refetch();
+        if (!silent) toast.success("Sincronizado com o Jira!");
+      }
+    } catch (err: any) {
+      if (!silent) toast.error(`Erro: ${err?.message}`);
+    } finally {
+      setSyncingId(null);
+    }
+  }, [qc, refetch]);
 
+  // Sincroniza todos os chamados com jira_key em sequência e recarrega a lista ao final
   const syncAllJiraIssues = useCallback(async (silent = true) => {
     if (!chamados?.length) return;
     const comJira = chamados.filter(c => c.jira_key);
     if (!comJira.length) return;
-    setIsSyncingAll(true);
-    const { data: { session } } = await supabase.auth.getSession();
-    await Promise.allSettled(
-      comJira.map(c => fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-        body: JSON.stringify({ chamado_id: c.id }),
-      }))
-    );
-    lastSyncRef.current = Date.now();
-    qc.invalidateQueries({ queryKey: ["chamados"] });
-    setIsSyncingAll(false);
-    if (!silent) toast.success("Chamados sincronizados com o Jira!");
-  }, [chamados, qc]);
 
+    setIsSyncingAll(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const headers = {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      };
+
+      // Executa em lotes de 5 para não sobrecarregar
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < comJira.length; i += BATCH_SIZE) {
+        const lote = comJira.slice(i, i + BATCH_SIZE);
+        await Promise.allSettled(
+          lote.map(c =>
+            fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ chamado_id: c.id }),
+            }).then(r => r.json())
+          )
+        );
+      }
+
+      lastSyncRef.current = Date.now();
+      // Aguarda o refetch completo para atualizar a UI
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
+      if (!silent) toast.success("Chamados sincronizados com o Jira!");
+    } catch (err: any) {
+      if (!silent) toast.error(`Erro na sincronização: ${err?.message}`);
+    } finally {
+      setIsSyncingAll(false);
+    }
+  }, [chamados, qc, refetch]);
+
+  // Auto-sync a cada 5 minutos
   useEffect(() => {
     const timer = setInterval(() => syncAllJiraIssues(true), 5 * 60 * 1000);
     return () => clearInterval(timer);
@@ -293,10 +328,16 @@ const ListaChamados = () => {
         const result = await res.json();
         if (!res.ok) toast.warning(`Status atualizado no app, mas falhou no Jira: ${result.error ?? "erro"}`);
         else toast.success(`Status atualizado para "${novoStatus}" ✓`);
-      } else toast.success(`Status atualizado para "${novoStatus}"`);
-      qc.invalidateQueries({ queryKey: ["chamados"] });
-    } catch (err: any) { toast.error(`Erro: ${err?.message}`); }
-    finally { setUpdatingStatusId(null); }
+      } else {
+        toast.success(`Status atualizado para "${novoStatus}"`);
+      }
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
+    } catch (err: any) {
+      toast.error(`Erro: ${err?.message}`);
+    } finally {
+      setUpdatingStatusId(null);
+    }
   };
 
   const openEdit = (c: any) => {
@@ -311,15 +352,26 @@ const ListaChamados = () => {
       await handleStatusChange(editingId, editForm.status_jira, chamado.jira_key);
     }
     const { error } = await supabase.from("chamados").update({ titulo: editForm.titulo, responsavel_nome: editForm.responsavel_nome || null }).eq("id", editingId);
-    if (error) toast.error("Erro ao salvar");
-    else { toast.success("Chamado atualizado!"); qc.invalidateQueries({ queryKey: ["chamados"] }); setEditingId(null); }
+    if (error) {
+      toast.error("Erro ao salvar");
+    } else {
+      toast.success("Chamado atualizado!");
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
+      setEditingId(null);
+    }
   };
 
   const handleDelete = async () => {
     if (!deletingId) return;
     const { error } = await supabase.from("chamados").delete().eq("id", deletingId);
-    if (error) toast.error("Erro ao excluir");
-    else { toast.success("Chamado excluído!"); qc.invalidateQueries({ queryKey: ["chamados"] }); }
+    if (error) {
+      toast.error("Erro ao excluir");
+    } else {
+      toast.success("Chamado excluído!");
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
+    }
     setDeletingId(null);
   };
 
@@ -340,6 +392,7 @@ const ListaChamados = () => {
           <h2 className="text-2xl font-bold text-foreground">Chamados</h2>
           <p className="text-muted-foreground text-sm mt-0.5">
             {chamadosFiltrados.length} de {chamados?.length ?? 0} chamados
+            {isFetching && !isLoading && <span className="ml-2 text-xs opacity-60">(atualizando...)</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -364,7 +417,13 @@ const ListaChamados = () => {
               <Columns className="h-4 w-4" />
             </Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => syncAllJiraIssues(false)} disabled={isSyncingAll} className="gap-1.5 h-8">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => syncAllJiraIssues(false)}
+            disabled={isSyncingAll || isFetching}
+            className="gap-1.5 h-8"
+          >
             <RefreshCw className={`h-3.5 w-3.5 ${isSyncingAll ? "animate-spin" : ""}`} />
             {isSyncingAll ? "Sincronizando..." : "Sincronizar"}
           </Button>
@@ -415,7 +474,6 @@ const ListaChamados = () => {
                 </CardContent>
               </Card>
             ) : (
-              // Agrupa por status no modo lista
               <div className="space-y-6">
                 {STATUS_OPTIONS.map(status => {
                   const grupo = chamadosFiltrados.filter(c => (c.status_jira ?? "Aberto") === status);
@@ -453,7 +511,6 @@ const ListaChamados = () => {
         {/* MODO KANBAN */}
         {viewMode === "kanban" && (
           <motion.div key="kanban" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {/* Mobile: scroll horizontal suave com snap. Desktop: grid adaptativo */}
             <div className="
               flex gap-3 pb-4
               overflow-x-auto scroll-smooth snap-x snap-mandatory
@@ -463,14 +520,12 @@ const ListaChamados = () => {
             ">
               {kanbanColunas.map(({ status, chamados: cols }) => (
                 <div key={status} className="flex-shrink-0 w-[80vw] snap-start sm:w-auto">
-                  {/* Header da coluna */}
                   <div className={`flex items-center justify-between p-3 rounded-t-lg border-t-2 border-x ${STATUS_HEADER_COLORS[status]}`}>
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[status]}`}>{status}</span>
                     <span className="text-xs font-medium text-muted-foreground bg-background/60 rounded-full px-2 py-0.5">
                       {cols.length}
                     </span>
                   </div>
-                  {/* Cards */}
                   <div className={`border-x border-b rounded-b-lg p-2 space-y-2 min-h-[120px] ${STATUS_HEADER_COLORS[status]} bg-opacity-30`}>
                     {cols.length === 0 && (
                       <p className="text-xs text-muted-foreground text-center py-6 opacity-60">Nenhum chamado</p>
