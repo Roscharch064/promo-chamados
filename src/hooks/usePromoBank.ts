@@ -18,6 +18,8 @@ export function useChamados() {
       if (error) throw error;
       return data;
     },
+    refetchInterval: 5 * 60 * 1000, // atualiza automaticamente a cada 5 minutos
+    refetchIntervalInBackground: false, // pausa quando a aba não está ativa
   });
 }
 
