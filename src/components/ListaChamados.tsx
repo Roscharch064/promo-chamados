@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -49,6 +49,8 @@ const ListaChamados = () => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const lastSyncRef = useRef<number>(0);
   const [editForm, setEditForm] = useState<{
     titulo: string;
     status_jira: string;
@@ -89,7 +91,42 @@ const ListaChamados = () => {
     }
   }, [qc]);
 
-  // Ao expandir, faz sync automático silencioso
+  // Sync de todos os chamados com jira_key (chamado automaticamente a cada 5 min)
+  const syncAllJiraIssues = useCallback(async (silent = true) => {
+    if (!chamados?.length) return;
+    const comJira = chamados.filter((c) => c.jira_key);
+    if (!comJira.length) return;
+
+    setIsSyncingAll(true);
+    const { data: { session } } = await supabase.auth.getSession();
+
+    await Promise.allSettled(
+      comJira.map((c) =>
+        fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          },
+          body: JSON.stringify({ chamado_id: c.id }),
+        })
+      )
+    );
+
+    lastSyncRef.current = Date.now();
+    qc.invalidateQueries({ queryKey: ["chamados"] });
+    setIsSyncingAll(false);
+    if (!silent) toast.success("Chamados sincronizados com o Jira!");
+  }, [chamados, qc]);
+
+  // Polling automático a cada 5 minutos
+  useEffect(() => {
+    const INTERVAL = 5 * 60 * 1000;
+    const timer = setInterval(() => {
+      syncAllJiraIssues(true);
+    }, INTERVAL);
+    return () => clearInterval(timer);
+  }, [syncAllJiraIssues]);
   const handleToggleExpand = (chamadoId: string, jiraKey: string | null) => {
     if (expandedId === chamadoId) {
       setExpandedId(null);
@@ -185,8 +222,7 @@ const ListaChamados = () => {
   };
 
   const handleManualRefresh = async () => {
-    await refetch();
-    toast.success("Chamados atualizados!");
+    await syncAllJiraIssues(false);
   };
 
   if (isLoading) {
@@ -210,11 +246,11 @@ const ListaChamados = () => {
           variant="outline"
           size="sm"
           onClick={handleManualRefresh}
-          disabled={isFetching}
+          disabled={isSyncingAll}
           className="flex items-center gap-2"
         >
-          <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
-          Sincronizar
+          <RefreshCw className={`h-4 w-4 ${isSyncingAll ? "animate-spin" : ""}`} />
+          {isSyncingAll ? "Sincronizando..." : "Sincronizar"}
         </Button>
       </div>
 
