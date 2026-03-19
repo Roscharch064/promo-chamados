@@ -5,7 +5,20 @@ import { useAuth } from "@/hooks/useAuth";
 
 const AppHeader = () => {
   const { theme, toggleTheme } = useTheme();
-  const { signOut, session } = useAuth();
+  const { signOut, session, tipoUsuario } = useAuth();
+
+  // Pega o nome do user_metadata (salvo pelo atlassian-callback) ou fallback para email
+  const nomeExibido =
+    session?.user?.user_metadata?.nome ||
+    session?.user?.user_metadata?.full_name ||
+    session?.user?.email?.split("@")[0] ||
+    "";
+
+  const tipoLabel: Record<string, string> = {
+    gestor: "Gestor",
+    suporte: "Suporte",
+    franqueado: "Franqueado",
+  };
 
   return (
     <header className="border-b border-border bg-card">
@@ -16,9 +29,16 @@ const AppHeader = () => {
         </div>
         <div className="flex items-center gap-2">
           {session && (
-            <span className="text-xs text-muted-foreground hidden sm:block">
-              {session.user.email}
-            </span>
+            <div className="hidden sm:flex flex-col items-end">
+              <span className="text-xs font-medium text-foreground capitalize">
+                {nomeExibido}
+              </span>
+              {tipoUsuario && (
+                <span className="text-xs text-muted-foreground">
+                  {tipoLabel[tipoUsuario] ?? tipoUsuario}
+                </span>
+              )}
+            </div>
           )}
           <Button variant="ghost" size="icon" onClick={toggleTheme} title="Alternar tema">
             {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
