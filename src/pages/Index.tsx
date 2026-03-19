@@ -6,9 +6,11 @@ import NovoChamado from "@/components/NovoChamado";
 import ListaChamados from "@/components/ListaChamados";
 import GerenciarUsuarios from "@/components/GerenciarUsuarios";
 import AppHeader from "@/components/AppHeader";
+import { useAuth } from "@/hooks/useAuth";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
+  const { canManageUsers } = useAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -28,10 +30,14 @@ const Index = () => {
               <List className="h-4 w-4" />
               Chamados
             </TabsTrigger>
-            <TabsTrigger value="usuarios" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-              <Users className="h-4 w-4" />
-              Usuários
-            </TabsTrigger>
+
+            {/* Aba Usuários visível apenas para gestor */}
+            {canManageUsers && (
+              <TabsTrigger value="usuarios" className="gap-2 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Users className="h-4 w-4" />
+                Usuários
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="dashboard">
@@ -43,9 +49,12 @@ const Index = () => {
           <TabsContent value="chamados">
             <ListaChamados />
           </TabsContent>
-          <TabsContent value="usuarios">
-            <GerenciarUsuarios />
-          </TabsContent>
+
+          {canManageUsers && (
+            <TabsContent value="usuarios">
+              <GerenciarUsuarios />
+            </TabsContent>
+          )}
         </Tabs>
       </main>
     </div>
