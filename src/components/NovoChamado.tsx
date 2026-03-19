@@ -83,6 +83,9 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     const prioridade = aiResult?.prioridade ?? "Medium";
 
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const emailLogado = session?.user?.email ?? relator.email ?? null;
+
       const chamado = await createChamado.mutateAsync({
         tipo,
         titulo,
@@ -90,6 +93,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         modulo: modulo || null,
         relator_nome: relator.nome,
         relator_account_id: relator.account_id_jira,
+        aberto_por_email: emailLogado,
         prioridade,
         origem: "app_direto",
       });
