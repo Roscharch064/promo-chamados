@@ -85,12 +85,12 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
 
   const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files) return;
-    const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
+    const MAX_SIZE = 100 * 1024 * 1024; // 100 MB
     const novos: Evidencia[] = [];
 
     Array.from(files).forEach(file => {
       if (file.size > MAX_SIZE) {
-        toast.error(`${file.name} é muito grande (máx 50 MB)`);
+        toast.error(`${file.name} é muito grande (máx 100 MB)`);
         return;
       }
       const evidencia: Evidencia = { file };
@@ -240,7 +240,8 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               empresa_afetada: tipo === "bug" ? empresaAfetada : undefined,
               login_afetado: tipo === "bug" ? loginAfetado : undefined,
               solicitante_nome: tipo !== "bug" ? solicitanteNome : undefined,
-              total_evidencias: evidenciasData.length,
+              // Passa as evidências já uploadadas para serem adicionadas como comentário no Jira
+              evidencias: evidenciasData.length > 0 ? evidenciasData : undefined,
             },
           });
           if (jiraError) throw jiraError;
@@ -352,7 +353,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               <Label className="flex items-center gap-1.5">
                 <Paperclip className="h-3.5 w-3.5" />
                 Evidências
-                <span className="text-xs text-muted-foreground font-normal">(fotos, vídeos, docs, planilhas — máx 50 MB cada)</span>
+                <span className="text-xs text-muted-foreground font-normal">(fotos, vídeos, docs, planilhas — máx 100 MB cada)</span>
               </Label>
 
               {/* Zona de drop */}
