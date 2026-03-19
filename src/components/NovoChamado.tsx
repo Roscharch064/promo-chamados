@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useCreateChamado, useUsuarios } from "@/hooks/usePromoBank";
-import { Sparkles, Loader2, Send, Bug, Lightbulb, ClipboardList } from "lucide-react";
+import { Sparkles, Loader2, Send, Bug, Lightbulb, ClipboardList, Paperclip, X, FileText, Image, Film, Sheet } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -23,43 +23,54 @@ interface NovoChamadoProps {
 type TipoChamado = "bug" | "melhoria" | "solicitacao";
 
 const TIPO_CONFIG = {
-  bug: {
-    label: "Bug",
-    icon: Bug,
-    color: "text-red-500",
-    descPlaceholder: "Descreva o problema encontrado com o máximo de detalhes...",
-  },
-  melhoria: {
-    label: "Melhoria",
-    icon: Lightbulb,
-    color: "text-yellow-500",
-    descPlaceholder: "Descreva a melhoria que deseja ver no sistema...",
-  },
-  solicitacao: {
-    label: "Solicitação",
-    icon: ClipboardList,
-    color: "text-blue-500",
-    descPlaceholder: "Descreva o que está sendo solicitado...",
-  },
+  bug: { label: "Bug", icon: Bug, color: "text-red-500", descPlaceholder: "Descreva o problema encontrado com o máximo de detalhes..." },
+  melhoria: { label: "Melhoria", icon: Lightbulb, color: "text-yellow-500", descPlaceholder: "Descreva a melhoria que deseja ver no sistema..." },
+  solicitacao: { label: "Solicitação", icon: ClipboardList, color: "text-blue-500", descPlaceholder: "Descreva o que está sendo solicitado..." },
 };
+
+const FILE_ICONS: Record<string, any> = {
+  image: Image,
+  video: Film,
+  pdf: FileText,
+  excel: Sheet,
+  word: FileText,
+  default: FileText,
+};
+
+function getFileIcon(type: string) {
+  if (type.startsWith("image/")) return FILE_ICONS.image;
+  if (type.startsWith("video/")) return FILE_ICONS.video;
+  if (type === "application/pdf") return FILE_ICONS.pdf;
+  if (type.includes("spreadsheet") || type.includes("excel") || type === "text/csv") return FILE_ICONS.excel;
+  if (type.includes("word") || type.includes("document")) return FILE_ICONS.word;
+  return FILE_ICONS.default;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+interface Evidencia {
+  file: File;
+  preview?: string;
+  uploading?: boolean;
+  error?: string;
+}
 
 const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
   const [tipo, setTipo] = useState<TipoChamado>("bug");
   const [modulo, setModulo] = useState("");
   const [descricao, setDescricao] = useState("");
   const [relatorId, setRelatorId] = useState("");
-
-  // Campos específicos por tipo
   const [empresaAfetada, setEmpresaAfetada] = useState("");
   const [loginAfetado, setLoginAfetado] = useState("");
   const [solicitanteNome, setSolicitanteNome] = useState("");
-
+  const [evidencias, setEvidencias] = useState<Evidencia[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [aiResult, setAiResult] = useState<{
-    titulo: string;
-    descricaoFormatada: string;
-    prioridade: string;
-  } | null>(null);
+  const [aiResult, setAiResult] = useState<{ titulo: string; descricaoFormatada: string; prioridade: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const createChamado = useCreateChamado();
   const { data: usuarios } = useUsuarios();
@@ -72,6 +83,40 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     setSolicitanteNome("");
   };
 
+  const handleFileSelect = useCallback((files: FileList | null) => {
+    if (!files) return;
+    const MAX_SIZE = 50 * 1024 * 1024; // 50 MB
+    const novos: Evidencia[] = [];
+
+    Array.from(files).forEach(file => {
+      if (file.size > MAX_SIZE) {
+        toast.error(`${file.name} é muito grande (máx 50 MB)`);
+        return;
+      }
+      const evidencia: Evidencia = { file };
+      if (file.type.startsWith("image/")) {
+        evidencia.preview = URL.createObjectURL(file);
+      }
+      novos.push(evidencia);
+    });
+
+    setEvidencias(prev => [...prev, ...novos]);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    handleFileSelect(e.dataTransfer.files);
+  }, [handleFileSelect]);
+
+  const removeEvidencia = (index: number) => {
+    setEvidencias(prev => {
+      const nova = [...prev];
+      if (nova[index].preview) URL.revokeObjectURL(nova[index].preview!);
+      nova.splice(index, 1);
+      return nova;
+    });
+  };
+
   const validarCampos = (): boolean => {
     if (!relatorId) { toast.error("Selecione quem está relatando o chamado"); return false; }
     if (!descricao.trim()) { toast.error("Preencha a descrição"); return false; }
@@ -79,22 +124,19 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
       if (!empresaAfetada.trim()) { toast.error("Informe a empresa afetada"); return false; }
       if (!loginAfetado.trim()) { toast.error("Informe o login afetado"); return false; }
     }
-    if (tipo === "melhoria" || tipo === "solicitacao") {
-      if (!solicitanteNome.trim()) { toast.error("Informe o nome do solicitante"); return false; }
+    if ((tipo === "melhoria" || tipo === "solicitacao") && !solicitanteNome.trim()) {
+      toast.error("Informe o nome do solicitante"); return false;
     }
     return true;
   };
 
   const handleAIFormat = async () => {
     if (!validarCampos()) return;
-
     setIsProcessing(true);
     try {
       const { data, error } = await supabase.functions.invoke("format-chamado", {
         body: {
-          descricao,
-          tipo,
-          modulo,
+          descricao, tipo, modulo,
           empresa_afetada: tipo === "bug" ? empresaAfetada : undefined,
           login_afetado: tipo === "bug" ? loginAfetado : undefined,
           solicitante_nome: tipo !== "bug" ? solicitanteNome : undefined,
@@ -108,8 +150,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
       });
       if (data.modulo_inferido && !modulo) setModulo(data.modulo_inferido);
       toast.success("Chamado formatado pela IA!");
-    } catch (err) {
-      console.error(err);
+    } catch {
       setAiResult({
         titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`,
         descricaoFormatada: descricao,
@@ -121,8 +162,35 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     }
   };
 
+  const uploadEvidencias = async (chamadoId: string): Promise<Array<{ nome: string; url: string; tipo: string; tamanho: number }>> => {
+    const resultados = [];
+    for (let i = 0; i < evidencias.length; i++) {
+      const ev = evidencias[i];
+      setEvidencias(prev => prev.map((e, idx) => idx === i ? { ...e, uploading: true } : e));
+      try {
+        const ext = ev.file.name.split(".").pop();
+        const path = `${chamadoId}/${Date.now()}_${ev.file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+        const { error } = await supabase.storage.from("evidencias").upload(path, ev.file);
+        if (error) throw error;
+        const { data: urlData } = supabase.storage.from("evidencias").getPublicUrl(path);
+        resultados.push({
+          nome: ev.file.name,
+          url: urlData.publicUrl,
+          tipo: ev.file.type,
+          tamanho: ev.file.size,
+          path,
+        });
+        setEvidencias(prev => prev.map((e, idx) => idx === i ? { ...e, uploading: false } : e));
+      } catch (err: any) {
+        setEvidencias(prev => prev.map((e, idx) => idx === i ? { ...e, uploading: false, error: err.message } : e));
+        toast.error(`Erro ao enviar ${ev.file.name}`);
+      }
+    }
+    return resultados;
+  };
+
   const handleSubmit = async () => {
-    const relator = usuarios?.find((u) => u.id === relatorId);
+    const relator = usuarios?.find(u => u.id === relatorId);
     if (!relator) { toast.error("Selecione o relator"); return; }
 
     const titulo = aiResult?.titulo ?? `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
@@ -131,7 +199,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const emailLogado = session?.user?.email ?? relator.email ?? null;
+      const emailLogado = session?.user?.email ?? null;
 
       const chamado = await createChamado.mutateAsync({
         tipo,
@@ -148,13 +216,22 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         solicitante_nome: tipo !== "bug" ? solicitanteNome || null : null,
       } as any);
 
+      // Upload das evidências
+      let evidenciasData: any[] = [];
+      if (evidencias.length > 0) {
+        toast.info("Enviando evidências...");
+        evidenciasData = await uploadEvidencias(chamado.id);
+        if (evidenciasData.length > 0) {
+          await supabase.from("chamados").update({ evidencias: evidenciasData }).eq("id", chamado.id);
+        }
+      }
+
+      // Cria issue no Jira
       if (relator.jira_email && relator.jira_api_token) {
         try {
           const { data: jiraData, error: jiraError } = await supabase.functions.invoke("create-jira-issue", {
             body: {
-              titulo,
-              descricao: descFormatada,
-              tipo,
+              titulo, descricao: descFormatada, tipo,
               relator_nome: relator.nome,
               relator_account_id: relator.account_id_jira,
               jira_email: relator.jira_email,
@@ -163,34 +240,25 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               empresa_afetada: tipo === "bug" ? empresaAfetada : undefined,
               login_afetado: tipo === "bug" ? loginAfetado : undefined,
               solicitante_nome: tipo !== "bug" ? solicitanteNome : undefined,
+              total_evidencias: evidenciasData.length,
             },
           });
-
           if (jiraError) throw jiraError;
-
           if (jiraData?.jira_key) {
-            await supabase
-              .from("chamados")
-              .update({ jira_key: jiraData.jira_key, status_jira: "Aberto" })
-              .eq("id", chamado.id);
-            toast.success(`Chamado criado e issue ${jiraData.jira_key} aberta no Jira!`);
+            await supabase.from("chamados").update({ jira_key: jiraData.jira_key, status_jira: "Aberto" }).eq("id", chamado.id);
+            toast.success(`Chamado criado! Issue ${jiraData.jira_key} aberta no Jira${evidenciasData.length > 0 ? ` com ${evidenciasData.length} evidência(s)` : ""}.`);
           }
-        } catch (jiraErr) {
-          console.error("Erro ao criar issue no Jira:", jiraErr);
+        } catch {
           toast.warning("Chamado criado, mas houve erro ao abrir issue no Jira");
         }
       } else {
-        toast.success("Chamado criado!");
+        toast.success(`Chamado criado${evidenciasData.length > 0 ? ` com ${evidenciasData.length} evidência(s)` : ""}!`);
       }
 
       // Reset
-      setDescricao("");
-      setAiResult(null);
-      setModulo("");
-      setRelatorId("");
-      setEmpresaAfetada("");
-      setLoginAfetado("");
-      setSolicitanteNome("");
+      setDescricao(""); setAiResult(null); setModulo(""); setRelatorId("");
+      setEmpresaAfetada(""); setLoginAfetado(""); setSolicitanteNome("");
+      setEvidencias([]);
       onSuccess?.();
     } catch {
       toast.error("Erro ao criar chamado");
@@ -198,41 +266,31 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
   };
 
   const TipoIcon = TIPO_CONFIG[tipo].icon;
+  const isDragging = false;
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <div>
         <h2 className="text-2xl font-bold text-foreground">Novo Chamado</h2>
-        <p className="text-muted-foreground text-sm mt-1">
-          Preencha os campos e a IA formatará automaticamente para o Jira
-        </p>
+        <p className="text-muted-foreground text-sm mt-1">Preencha os campos e a IA formatará automaticamente para o Jira</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Detalhes</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle className="text-base">Detalhes</CardTitle></CardHeader>
           <CardContent className="space-y-4">
 
-            {/* Tipo — botões visuais */}
+            {/* Tipo */}
             <div className="space-y-2">
               <Label>Tipo</Label>
               <div className="grid grid-cols-3 gap-2">
-                {(["bug", "melhoria", "solicitacao"] as TipoChamado[]).map((t) => {
+                {(["bug", "melhoria", "solicitacao"] as TipoChamado[]).map(t => {
                   const Icon = TIPO_CONFIG[t].icon;
-                  const active = tipo === t;
                   return (
-                    <button
-                      key={t}
-                      onClick={() => handleTipoChange(t)}
+                    <button key={t} onClick={() => handleTipoChange(t)}
                       className={`flex flex-col items-center gap-1 p-3 rounded-lg border-2 transition-all text-xs font-medium
-                        ${active
-                          ? "border-primary bg-primary/10 text-primary"
-                          : "border-border bg-card text-muted-foreground hover:border-primary/50"
-                        }`}
-                    >
-                      <Icon className={`h-4 w-4 ${active ? "text-primary" : TIPO_CONFIG[t].color}`} />
+                        ${tipo === t ? "border-primary bg-primary/10 text-primary" : "border-border bg-card text-muted-foreground hover:border-primary/50"}`}>
+                      <Icon className={`h-4 w-4 ${tipo === t ? "text-primary" : TIPO_CONFIG[t].color}`} />
                       {TIPO_CONFIG[t].label}
                     </button>
                   );
@@ -245,11 +303,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               <Label>Módulo</Label>
               <Select value={modulo} onValueChange={setModulo}>
                 <SelectTrigger><SelectValue placeholder="Selecione o módulo" /></SelectTrigger>
-                <SelectContent>
-                  {MODULOS.map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectContent>{MODULOS.map(m => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
               </Select>
             </div>
 
@@ -258,63 +312,29 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               <Label>Relator</Label>
               <Select value={relatorId} onValueChange={setRelatorId}>
                 <SelectTrigger><SelectValue placeholder="Quem está relatando?" /></SelectTrigger>
-                <SelectContent>
-                  {usuarios?.map((u) => (
-                    <SelectItem key={u.id} value={u.id}>{u.nome} ({u.tipo})</SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectContent>{usuarios?.map(u => <SelectItem key={u.id} value={u.id}>{u.nome} ({u.tipo})</SelectItem>)}</SelectContent>
               </Select>
             </div>
 
-            {/* Campos dinâmicos por tipo */}
+            {/* Campos dinâmicos */}
             <AnimatePresence mode="wait">
               {tipo === "bug" && (
-                <motion.div
-                  key="bug-fields"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="space-y-3"
-                >
+                <motion.div key="bug" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="space-y-3">
                   <div className="space-y-2">
-                    <Label>
-                      Empresa afetada <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      value={empresaAfetada}
-                      onChange={(e) => setEmpresaAfetada(e.target.value)}
-                      placeholder="Nome da empresa/franquia afetada"
-                    />
+                    <Label>Empresa afetada <span className="text-destructive">*</span></Label>
+                    <Input value={empresaAfetada} onChange={e => setEmpresaAfetada(e.target.value)} placeholder="Nome da empresa/franquia" />
                   </div>
                   <div className="space-y-2">
-                    <Label>
-                      Login afetado <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      value={loginAfetado}
-                      onChange={(e) => setLoginAfetado(e.target.value)}
-                      placeholder="Login/usuário com problema"
-                    />
+                    <Label>Login afetado <span className="text-destructive">*</span></Label>
+                    <Input value={loginAfetado} onChange={e => setLoginAfetado(e.target.value)} placeholder="Login/usuário com problema" />
                   </div>
                 </motion.div>
               )}
-
               {(tipo === "melhoria" || tipo === "solicitacao") && (
-                <motion.div
-                  key="solicitante-field"
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: "auto" }}
-                  exit={{ opacity: 0, height: 0 }}
-                >
+                <motion.div key="sol" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
                   <div className="space-y-2">
-                    <Label>
-                      Solicitante <span className="text-destructive">*</span>
-                    </Label>
-                    <Input
-                      value={solicitanteNome}
-                      onChange={(e) => setSolicitanteNome(e.target.value)}
-                      placeholder="Nome de quem está solicitando"
-                    />
+                    <Label>Solicitante <span className="text-destructive">*</span></Label>
+                    <Input value={solicitanteNome} onChange={e => setSolicitanteNome(e.target.value)} placeholder="Nome de quem está solicitando" />
                   </div>
                 </motion.div>
               )}
@@ -323,19 +343,76 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
             {/* Descrição */}
             <div className="space-y-2">
               <Label>Descrição <span className="text-destructive">*</span></Label>
-              <Textarea
-                value={descricao}
-                onChange={(e) => setDescricao(e.target.value)}
-                placeholder={TIPO_CONFIG[tipo].descPlaceholder}
-                className="min-h-[130px] resize-none"
-              />
+              <Textarea value={descricao} onChange={e => setDescricao(e.target.value)}
+                placeholder={TIPO_CONFIG[tipo].descPlaceholder} className="min-h-[120px] resize-none" />
             </div>
 
-            <Button
-              onClick={handleAIFormat}
-              disabled={isProcessing || !descricao.trim()}
-              className="w-full gap-2"
-            >
+            {/* Evidências */}
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1.5">
+                <Paperclip className="h-3.5 w-3.5" />
+                Evidências
+                <span className="text-xs text-muted-foreground font-normal">(fotos, vídeos, docs, planilhas — máx 50 MB cada)</span>
+              </Label>
+
+              {/* Zona de drop */}
+              <div
+                onDrop={handleDrop}
+                onDragOver={e => e.preventDefault()}
+                onClick={() => fileInputRef.current?.click()}
+                className="border-2 border-dashed border-border rounded-lg p-4 text-center cursor-pointer hover:border-primary/50 hover:bg-primary/5 transition-all"
+              >
+                <Paperclip className="h-6 w-6 mx-auto text-muted-foreground mb-1" />
+                <p className="text-xs text-muted-foreground">
+                  Arraste arquivos aqui ou <span className="text-primary font-medium">clique para selecionar</span>
+                </p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">
+                  Imagens, vídeos, PDF, Word, Excel, CSV
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt"
+                  className="hidden"
+                  onChange={e => handleFileSelect(e.target.files)}
+                />
+              </div>
+
+              {/* Lista de arquivos */}
+              {evidencias.length > 0 && (
+                <div className="space-y-2">
+                  {evidencias.map((ev, i) => {
+                    const Icon = getFileIcon(ev.file.type);
+                    return (
+                      <div key={i} className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg">
+                        {ev.preview ? (
+                          <img src={ev.preview} alt={ev.file.name} className="h-10 w-10 object-cover rounded" />
+                        ) : (
+                          <div className="h-10 w-10 bg-muted rounded flex items-center justify-center">
+                            <Icon className="h-5 w-5 text-muted-foreground" />
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-foreground truncate">{ev.file.name}</p>
+                          <p className="text-xs text-muted-foreground">{formatBytes(ev.file.size)}</p>
+                          {ev.error && <p className="text-xs text-destructive">{ev.error}</p>}
+                        </div>
+                        {ev.uploading ? (
+                          <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
+                        ) : (
+                          <button onClick={() => removeEvidencia(i)} className="text-muted-foreground hover:text-destructive transition-colors shrink-0">
+                            <X className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <Button onClick={handleAIFormat} disabled={isProcessing || !descricao.trim()} className="w-full gap-2">
               {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {isProcessing ? "Processando com IA..." : "Formatar com IA"}
             </Button>
@@ -355,10 +432,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
                 <div>
                   <Label className="text-muted-foreground text-xs">Título</Label>
-                  <Input
-                    value={aiResult.titulo}
-                    onChange={(e) => setAiResult({ ...aiResult, titulo: e.target.value })}
-                  />
+                  <Input value={aiResult.titulo} onChange={e => setAiResult({ ...aiResult, titulo: e.target.value })} />
                 </div>
                 <div>
                   <Label className="text-muted-foreground text-xs">Prioridade</Label>
@@ -366,15 +440,17 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
                 </div>
                 <div>
                   <Label className="text-muted-foreground text-xs">Descrição Formatada</Label>
-                  <p className="text-sm text-foreground whitespace-pre-wrap bg-muted/50 p-3 rounded-lg max-h-64 overflow-y-auto">
+                  <p className="text-sm text-foreground whitespace-pre-wrap bg-muted/50 p-3 rounded-lg max-h-48 overflow-y-auto">
                     {aiResult.descricaoFormatada}
                   </p>
                 </div>
-                <Button
-                  onClick={handleSubmit}
-                  disabled={createChamado.isPending}
-                  className="w-full gap-2"
-                >
+                {evidencias.length > 0 && (
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 p-2 rounded-lg">
+                    <Paperclip className="h-3.5 w-3.5" />
+                    {evidencias.length} evidência(s) serão anexadas
+                  </div>
+                )}
+                <Button onClick={handleSubmit} disabled={createChamado.isPending} className="w-full gap-2">
                   {createChamado.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                   Criar Chamado
                 </Button>
