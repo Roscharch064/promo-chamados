@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { motion } from "framer-motion";
+import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -11,17 +11,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Loader2, ExternalLink, Pencil, Trash2,
-  ChevronDown, ChevronUp, MessageSquare, RefreshCw, User, Search, X,
+  Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp,
+  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns,
 } from "lucide-react";
 import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel,
-  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
-  AlertDialogHeader, AlertDialogTitle,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
 const STATUS_OPTIONS = [
@@ -40,68 +37,161 @@ const STATUS_COLORS: Record<string, string> = {
   "Concluído": "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 };
 
+const STATUS_HEADER_COLORS: Record<string, string> = {
+  "Aberto": "border-blue-400 bg-blue-50 dark:bg-blue-950",
+  "Em Atendimento": "border-yellow-400 bg-yellow-50 dark:bg-yellow-950",
+  "Aguardando Suporte": "border-orange-400 bg-orange-50 dark:bg-orange-950",
+  "Aguardando Desenvolvimento": "border-purple-400 bg-purple-50 dark:bg-purple-950",
+  "Concluído": "border-green-400 bg-green-50 dark:bg-green-950",
+};
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+
+// Card compacto reutilizável
+const ChamadoCard = ({
+  c, onEdit, onDelete, onStatusChange, onSync, canEdit, isSyncing, isUpdatingStatus,
+}: any) => {
+  const [expanded, setExpanded] = useState(false);
+  const comentarios = Array.isArray(c.comentarios) ? c.comentarios : [];
+
+  return (
+    <Card className="hover:shadow-md transition-shadow">
+      <CardContent className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5 mb-1 flex-wrap">
+              <Badge
+                variant={c.tipo === "bug" ? "destructive" : c.tipo === "melhoria" ? "default" : "secondary"}
+                className="text-xs h-4 px-1.5"
+              >
+                {c.tipo === "bug" ? "Bug" : c.tipo === "melhoria" ? "Melhoria" : "Solicitação"}
+              </Badge>
+              {c.modulo && (
+                <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                  {c.modulo}
+                </span>
+              )}
+            </div>
+            <p className="text-xs font-semibold text-foreground line-clamp-2">{c.titulo}</p>
+            <div className="flex flex-wrap gap-x-2 text-xs text-muted-foreground mt-1">
+              <span className="truncate max-w-[120px]">{c.relator_nome}</span>
+              {comentarios.length > 0 && (
+                <span className="flex items-center gap-0.5">
+                  <MessageSquare className="h-3 w-3" />{comentarios.length}
+                </span>
+              )}
+              <span>{new Date(c.created_at).toLocaleDateString("pt-BR")}</span>
+            </div>
+          </div>
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            {c.jira_key && (
+              <a
+                href={`https://datweb.atlassian.net/browse/${c.jira_key}`}
+                target="_blank" rel="noopener noreferrer"
+                className="text-xs text-primary hover:underline font-mono flex items-center gap-0.5"
+              >
+                {c.jira_key}<ExternalLink className="h-2.5 w-2.5" />
+              </a>
+            )}
+            <div className="flex items-center gap-0.5">
+              {c.jira_key && (
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onSync(c.id, c.jira_key)} disabled={isSyncing} title="Sincronizar">
+                  <RefreshCw className={`h-3 w-3 ${isSyncing ? "animate-spin" : ""}`} />
+                </Button>
+              )}
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setExpanded(!expanded)}>
+                {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+              </Button>
+              {canEdit && (
+                <>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => onEdit(c)} title="Editar">
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => onDelete(c.id)} title="Excluir">
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Expandido */}
+        {expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="mt-3 pt-3 border-t border-border space-y-2"
+          >
+            {/* Muda status */}
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Status</Label>
+              {isUpdatingStatus ? (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Atualizando...
+                </span>
+              ) : (
+                <Select value={c.status_jira ?? "Aberto"} onValueChange={(v) => onStatusChange(c.id, v, c.jira_key)}>
+                  <SelectTrigger className="h-7 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STATUS_OPTIONS.map(s => (
+                      <SelectItem key={s} value={s} className="text-xs">
+                        <span className={`px-1.5 py-0.5 rounded-full text-xs font-medium ${STATUS_COLORS[s]}`}>{s}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+            {c.responsavel_nome && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <User className="h-3 w-3" /> {c.responsavel_nome}
+              </div>
+            )}
+            {c.descricao && (
+              <p className="text-xs text-foreground bg-muted/50 p-2 rounded whitespace-pre-wrap line-clamp-4">
+                {c.descricao}
+              </p>
+            )}
+            {comentarios.length > 0 && (
+              <div className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">Comentários ({comentarios.length})</p>
+                {comentarios.slice(0, 3).map((com: any, ci: number) => (
+                  <div key={ci} className="bg-muted/50 p-2 rounded">
+                    <div className="flex justify-between text-xs text-muted-foreground mb-0.5">
+                      <span className="font-medium">{com.autor}</span>
+                      <span>{com.data}</span>
+                    </div>
+                    <p className="text-xs text-foreground line-clamp-2">{com.texto}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </CardContent>
+    </Card>
+  );
+};
 
 const ListaChamados = () => {
   const { data: chamados, isLoading, refetch, isFetching } = useChamados();
   const { canEditChamados } = useAuth();
   const qc = useQueryClient();
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  const [viewMode, setViewMode] = useState<"lista" | "kanban">("lista");
+  const [filtroTexto, setFiltroTexto] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const lastSyncRef = useRef<number>(0);
-
-  // Filtros
-  const [filtroTexto, setFiltroTexto] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("todos");
-  const [filtroTipo, setFiltroTipo] = useState("todos");
-  const [editForm, setEditForm] = useState<{
-    titulo: string;
-    status_jira: string;
-    responsavel_nome: string;
-  }>({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
-
-  // Sync comentários + responsável + status de uma issue específica
-  const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
-    if (!jiraKey) return;
-    setSyncingId(chamadoId);
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({ chamado_id: chamadoId }),
-      });
-
-      const result = await res.json();
-
-      if (!res.ok) {
-        if (!silent) toast.error(`Falha ao sincronizar com Jira: ${result.error ?? "erro desconhecido"}`);
-      } else {
-        qc.invalidateQueries({ queryKey: ["chamados"] });
-        if (!silent) {
-          toast.success(
-            `Sincronizado! ${result.total_comentarios} comentário(s) · Responsável: ${result.responsavel_nome ?? "não atribuído"}`
-          );
-        }
-      }
-    } catch (err: any) {
-      if (!silent) toast.error(`Erro ao sincronizar: ${err?.message ?? "erro desconhecido"}`);
-    } finally {
-      setSyncingId(null);
-    }
-  }, [qc]);
-
-  // Filtros
-  const [filtroTexto, setFiltroTexto] = useState("");
-  const [filtroStatus, setFiltroStatus] = useState("todos");
-  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [editForm, setEditForm] = useState({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
 
   const chamadosFiltrados = useMemo(() => {
     if (!chamados) return [];
@@ -111,198 +201,164 @@ const ListaChamados = () => {
         (c.relator_nome?.toLowerCase().includes(filtroTexto.toLowerCase())) ||
         (c.jira_key?.toLowerCase().includes(filtroTexto.toLowerCase())) ||
         ((c as any).empresa_afetada?.toLowerCase().includes(filtroTexto.toLowerCase()));
-      const matchStatus = filtroStatus === "todos" || c.status_jira === filtroStatus;
       const matchTipo = filtroTipo === "todos" || c.tipo === filtroTipo;
-      return matchTexto && matchStatus && matchTipo;
+      return matchTexto && matchTipo;
     });
-  }, [chamados, filtroTexto, filtroStatus, filtroTipo]);
+  }, [chamados, filtroTexto, filtroTipo]);
 
-  const limparFiltros = () => { setFiltroTexto(""); setFiltroStatus("todos"); setFiltroTipo("todos"); };
-  const temFiltro = filtroTexto || filtroStatus !== "todos" || filtroTipo !== "todos";
+  // Agrupa por status para kanban
+  const kanbanColunas = useMemo(() => {
+    return STATUS_OPTIONS.map(status => ({
+      status,
+      chamados: chamadosFiltrados.filter(c => (c.status_jira ?? "Aberto") === status),
+    }));
+  }, [chamadosFiltrados]);
 
-  // Sync de todos os chamados com jira_key (chamado automaticamente a cada 5 min)
+  const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
+    if (!jiraKey) return;
+    setSyncingId(chamadoId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({ chamado_id: chamadoId }),
+      });
+      const result = await res.json();
+      if (!res.ok) { if (!silent) toast.error(`Falha ao sincronizar: ${result.error ?? "erro"}`); }
+      else { qc.invalidateQueries({ queryKey: ["chamados"] }); if (!silent) toast.success("Sincronizado!"); }
+    } catch (err: any) { if (!silent) toast.error(`Erro: ${err?.message}`); }
+    finally { setSyncingId(null); }
+  }, [qc]);
+
   const syncAllJiraIssues = useCallback(async (silent = true) => {
     if (!chamados?.length) return;
-    const comJira = chamados.filter((c) => c.jira_key);
+    const comJira = chamados.filter(c => c.jira_key);
     if (!comJira.length) return;
-
     setIsSyncingAll(true);
     const { data: { session } } = await supabase.auth.getSession();
-
     await Promise.allSettled(
-      comJira.map((c) =>
-        fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
-          body: JSON.stringify({ chamado_id: c.id }),
-        })
-      )
+      comJira.map(c => fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
+        body: JSON.stringify({ chamado_id: c.id }),
+      }))
     );
-
     lastSyncRef.current = Date.now();
     qc.invalidateQueries({ queryKey: ["chamados"] });
     setIsSyncingAll(false);
     if (!silent) toast.success("Chamados sincronizados com o Jira!");
   }, [chamados, qc]);
 
-  // Polling automático a cada 5 minutos
   useEffect(() => {
-    const INTERVAL = 5 * 60 * 1000;
-    const timer = setInterval(() => {
-      syncAllJiraIssues(true);
-    }, INTERVAL);
+    const timer = setInterval(() => syncAllJiraIssues(true), 5 * 60 * 1000);
     return () => clearInterval(timer);
   }, [syncAllJiraIssues]);
-  const handleToggleExpand = (chamadoId: string, jiraKey: string | null) => {
-    if (expandedId === chamadoId) {
-      setExpandedId(null);
-    } else {
-      setExpandedId(chamadoId);
-      if (jiraKey) syncJiraIssue(chamadoId, jiraKey, true);
-    }
-  };
-
-  const openEdit = (c: any) => {
-    setEditForm({
-      titulo: c.titulo,
-      status_jira: c.status_jira ?? "Aberto",
-      responsavel_nome: c.responsavel_nome ?? "",
-    });
-    setEditingId(c.id);
-  };
 
   const handleStatusChange = async (chamadoId: string, novoStatus: string, jiraKey: string | null) => {
     setUpdatingStatusId(chamadoId);
     try {
-      const { error: supabaseError } = await supabase
-        .from("chamados")
-        .update({ status_jira: novoStatus, updated_at: new Date().toISOString() })
-        .eq("id", chamadoId);
-
-      if (supabaseError) throw supabaseError;
-
+      const { error } = await supabase.from("chamados").update({ status_jira: novoStatus, updated_at: new Date().toISOString() }).eq("id", chamadoId);
+      if (error) throw error;
       if (jiraKey) {
         const { data: { session } } = await supabase.auth.getSession();
         const res = await fetch(`${SUPABASE_URL}/functions/v1/update-jira-status`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-          },
+          headers: { "Content-Type": "application/json", ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}) },
           body: JSON.stringify({ chamado_id: chamadoId, novo_status: novoStatus }),
         });
-
         const result = await res.json();
-        if (!res.ok) {
-          toast.warning(`Status atualizado no app, mas falhou no Jira: ${result.error ?? "erro desconhecido"}`);
-        } else {
-          toast.success(`Status atualizado para "${novoStatus}" no app e no Jira ✓`);
-        }
-      } else {
-        toast.success(`Status atualizado para "${novoStatus}"`);
-      }
-
+        if (!res.ok) toast.warning(`Status atualizado no app, mas falhou no Jira: ${result.error ?? "erro"}`);
+        else toast.success(`Status atualizado para "${novoStatus}" ✓`);
+      } else toast.success(`Status atualizado para "${novoStatus}"`);
       qc.invalidateQueries({ queryKey: ["chamados"] });
-    } catch (err: any) {
-      toast.error(`Erro ao atualizar status: ${err?.message ?? "erro desconhecido"}`);
-    } finally {
-      setUpdatingStatusId(null);
-    }
+    } catch (err: any) { toast.error(`Erro: ${err?.message}`); }
+    finally { setUpdatingStatusId(null); }
+  };
+
+  const openEdit = (c: any) => {
+    setEditForm({ titulo: c.titulo, status_jira: c.status_jira ?? "Aberto", responsavel_nome: c.responsavel_nome ?? "" });
+    setEditingId(c.id);
   };
 
   const handleSaveEdit = async () => {
     if (!editingId) return;
-    const chamado = chamados?.find((c) => c.id === editingId);
-
+    const chamado = chamados?.find(c => c.id === editingId);
     if (chamado && chamado.status_jira !== editForm.status_jira) {
       await handleStatusChange(editingId, editForm.status_jira, chamado.jira_key);
     }
-
-    const { error } = await supabase
-      .from("chamados")
-      .update({
-        titulo: editForm.titulo,
-        responsavel_nome: editForm.responsavel_nome || null,
-      })
-      .eq("id", editingId);
-
-    if (error) {
-      toast.error("Erro ao salvar alterações");
-    } else {
-      toast.success("Chamado atualizado!");
-      qc.invalidateQueries({ queryKey: ["chamados"] });
-      setEditingId(null);
-    }
+    const { error } = await supabase.from("chamados").update({ titulo: editForm.titulo, responsavel_nome: editForm.responsavel_nome || null }).eq("id", editingId);
+    if (error) toast.error("Erro ao salvar");
+    else { toast.success("Chamado atualizado!"); qc.invalidateQueries({ queryKey: ["chamados"] }); setEditingId(null); }
   };
 
   const handleDelete = async () => {
     if (!deletingId) return;
     const { error } = await supabase.from("chamados").delete().eq("id", deletingId);
-    if (error) {
-      toast.error("Erro ao excluir chamado");
-    } else {
-      toast.success("Chamado excluído!");
-      qc.invalidateQueries({ queryKey: ["chamados"] });
-    }
+    if (error) toast.error("Erro ao excluir");
+    else { toast.success("Chamado excluído!"); qc.invalidateQueries({ queryKey: ["chamados"] }); }
     setDeletingId(null);
   };
 
-  const handleManualRefresh = async () => {
-    await syncAllJiraIssues(false);
-  };
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+    </div>
+  );
 
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const temFiltro = filtroTexto || filtroTipo !== "todos";
 
   return (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-4">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Chamados</h2>
-          <p className="text-muted-foreground text-sm mt-1">
+          <p className="text-muted-foreground text-sm mt-0.5">
             {chamadosFiltrados.length} de {chamados?.length ?? 0} chamados
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleManualRefresh}
-          disabled={isSyncingAll}
-          className="flex items-center gap-2"
-        >
-          <RefreshCw className={`h-4 w-4 ${isSyncingAll ? "animate-spin" : ""}`} />
-          {isSyncingAll ? "Sincronizando..." : "Sincronizar"}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Alternador de modo */}
+          <div className="flex border border-border rounded-lg overflow-hidden">
+            <Button
+              variant={viewMode === "lista" ? "default" : "ghost"}
+              size="sm"
+              className="rounded-none h-8 px-3"
+              onClick={() => setViewMode("lista")}
+              title="Modo lista"
+            >
+              <LayoutList className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "kanban" ? "default" : "ghost"}
+              size="sm"
+              className="rounded-none h-8 px-3"
+              onClick={() => setViewMode("kanban")}
+              title="Modo kanban"
+            >
+              <Columns className="h-4 w-4" />
+            </Button>
+          </div>
+          <Button variant="outline" size="sm" onClick={() => syncAllJiraIssues(false)} disabled={isSyncingAll} className="gap-1.5 h-8">
+            <RefreshCw className={`h-3.5 w-3.5 ${isSyncingAll ? "animate-spin" : ""}`} />
+            {isSyncingAll ? "Sincronizando..." : "Sincronizar"}
+          </Button>
+        </div>
       </div>
 
       {/* Filtros */}
-      <div className="flex flex-wrap gap-2 items-center">
+      <div className="flex flex-wrap gap-2">
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             className="pl-8 h-8 text-xs"
-            placeholder="Buscar por título, relator, Jira..."
+            placeholder="Buscar título, relator, chave Jira..."
             value={filtroTexto}
             onChange={(e) => setFiltroTexto(e.target.value)}
           />
         </div>
-        <Select value={filtroStatus} onValueChange={setFiltroStatus}>
-          <SelectTrigger className="h-8 text-xs w-auto min-w-[140px]">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todos" className="text-xs">Todos os status</SelectItem>
-            {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
-          </SelectContent>
-        </Select>
         <Select value={filtroTipo} onValueChange={setFiltroTipo}>
           <SelectTrigger className="h-8 text-xs w-auto min-w-[120px]">
             <SelectValue placeholder="Tipo" />
@@ -315,272 +371,121 @@ const ListaChamados = () => {
           </SelectContent>
         </Select>
         {temFiltro && (
-          <Button variant="ghost" size="sm" onClick={limparFiltros} className="h-8 gap-1 text-xs text-muted-foreground">
+          <Button variant="ghost" size="sm" onClick={() => { setFiltroTexto(""); setFiltroTipo("todos"); }} className="h-8 gap-1 text-xs text-muted-foreground">
             <X className="h-3 w-3" /> Limpar
           </Button>
         )}
       </div>
 
-      {!chamadosFiltrados.length ? (
-        <Card>
-          <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            {temFiltro ? (
-              <>
-                <p className="text-lg font-medium">Nenhum chamado encontrado</p>
-                <p className="text-sm mt-1">Tente ajustar os filtros</p>
-              </>
+      {/* MODO LISTA */}
+      <AnimatePresence mode="wait">
+        {viewMode === "lista" && (
+          <motion.div key="lista" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {!chamadosFiltrados.length ? (
+              <Card>
+                <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                  {temFiltro ? (
+                    <><p className="text-lg font-medium">Nenhum resultado</p><p className="text-sm mt-1">Tente ajustar os filtros</p></>
+                  ) : (
+                    <><p className="text-lg font-medium">Nenhum chamado ainda</p><p className="text-sm mt-1">Crie o primeiro na aba "Novo Chamado"</p></>
+                  )}
+                </CardContent>
+              </Card>
             ) : (
-              <>
-                <p className="text-lg font-medium">Nenhum chamado ainda</p>
-                <p className="text-sm mt-1">Crie o primeiro chamado na aba "Novo Chamado"</p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {chamadosFiltrados.map((c, i) => {
-            const isExpanded = expandedId === c.id;
-            const isSyncing = syncingId === c.id;
-            const isUpdatingStatus = updatingStatusId === c.id;
-            const comentarios = Array.isArray(c.comentarios) ? c.comentarios : [];
-
-            return (
-              <motion.div
-                key={c.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.03 }}
-              >
-                <Card className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        {/* Badges de tipo, módulo e status */}
-                        <div className="flex items-center gap-2 mb-1 flex-wrap">
-                          <Badge variant={
-                            c.tipo === "bug" ? "destructive" :
-                            c.tipo === "melhoria" ? "default" : "secondary"
-                          } className="text-xs">
-                            {c.tipo === "bug" ? "Bug" : c.tipo === "melhoria" ? "Melhoria" : "Solicitação"}
-                          </Badge>
-                          {c.modulo && (
-                            <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                              {c.modulo}
-                            </span>
-                          )}
-
-                          {isUpdatingStatus ? (
-                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                              <Loader2 className="h-3 w-3 animate-spin" />
-                              Atualizando...
-                            </span>
-                          ) : (
-                            <Select
-                              value={c.status_jira ?? "Aberto"}
-                              onValueChange={(v) => handleStatusChange(c.id, v, c.jira_key)}
-                            >
-                              <SelectTrigger className="h-auto border-0 shadow-none p-0 focus:ring-0 focus:ring-offset-0 bg-transparent w-auto">
-                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer hover:opacity-80 transition-opacity ${STATUS_COLORS[c.status_jira ?? "Aberto"] ?? "bg-muted text-muted-foreground"}`}>
-                                  {c.status_jira ?? "Aberto"}
-                                </span>
-                              </SelectTrigger>
-                              <SelectContent>
-                                {STATUS_OPTIONS.map((s) => (
-                                  <SelectItem key={s} value={s}>
-                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[s]}`}>
-                                      {s}
-                                    </span>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          )}
-                        </div>
-
-                        <h3 className="font-semibold text-foreground text-sm truncate">{c.titulo}</h3>
-
-                        <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground mt-1">
-                          <span>Relator: {c.relator_nome}</span>
-                          {c.responsavel_nome && (
-                            <span className="flex items-center gap-1">
-                              <User className="h-3 w-3" />
-                              {c.responsavel_nome}
-                            </span>
-                          )}
-                          <span>• {new Date(c.created_at).toLocaleDateString("pt-BR")}</span>
-                          {comentarios.length > 0 && (
-                            <span className="flex items-center gap-1">
-                              <MessageSquare className="h-3 w-3" />
-                              {comentarios.length}
-                            </span>
-                          )}
-                        </div>
+              // Agrupa por status no modo lista
+              <div className="space-y-6">
+                {STATUS_OPTIONS.map(status => {
+                  const grupo = chamadosFiltrados.filter(c => (c.status_jira ?? "Aberto") === status);
+                  if (!grupo.length) return null;
+                  return (
+                    <div key={status}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${STATUS_COLORS[status]}`}>{status}</span>
+                        <span className="text-xs text-muted-foreground">{grupo.length} chamado{grupo.length > 1 ? "s" : ""}</span>
                       </div>
-
-                      <div className="flex flex-col items-end gap-1 shrink-0">
-                        {c.jira_key && (
-                          <a
-                            href={`https://datweb.atlassian.net/browse/${c.jira_key}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-primary hover:underline flex items-center gap-1 font-mono"
-                          >
-                            {c.jira_key}
-                            <ExternalLink className="h-3 w-3" />
-                          </a>
-                        )}
-                        <div className="flex items-center gap-1 mt-1">
-                          {/* Botão sync manual por chamado */}
-                          {c.jira_key && (
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-7 w-7"
-                              onClick={() => syncJiraIssue(c.id, c.jira_key)}
-                              disabled={isSyncing}
-                              title="Sincronizar com Jira"
-                            >
-                              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-7 w-7"
-                            onClick={() => handleToggleExpand(c.id, c.jira_key)}
-                            title="Ver detalhes"
-                          >
-                            {isExpanded
-                              ? <ChevronUp className="h-3.5 w-3.5" />
-                              : <ChevronDown className="h-3.5 w-3.5" />}
-                          </Button>
-                          {canEditChamados && (
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-7 w-7"
-                              onClick={() => openEdit(c)}
-                              title="Editar"
-                            >
-                              <Pencil className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {canEditChamados && (
-                            <Button
-                              variant="ghost" size="icon"
-                              className="h-7 w-7 text-destructive hover:text-destructive"
-                              onClick={() => setDeletingId(c.id)}
-                              title="Excluir"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                        </div>
+                      <div className="space-y-2">
+                        {grupo.map((c, i) => (
+                          <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+                            <ChamadoCard
+                              c={c}
+                              onEdit={openEdit}
+                              onDelete={(id: string) => setDeletingId(id)}
+                              onStatusChange={handleStatusChange}
+                              onSync={syncJiraIssue}
+                              canEdit={canEditChamados}
+                              isSyncing={syncingId === c.id}
+                              isUpdatingStatus={updatingStatusId === c.id}
+                            />
+                          </motion.div>
+                        ))}
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
 
-                    {/* Painel expandido */}
-                    {isExpanded && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        className="mt-4 pt-4 border-t border-border space-y-4"
-                      >
-                        {/* Responsável */}
-                        {c.responsavel_nome && (
-                          <div className="flex items-center gap-2 text-sm">
-                            <User className="h-4 w-4 text-muted-foreground shrink-0" />
-                            <span className="text-muted-foreground text-xs">Responsável no Jira:</span>
-                            <span className="text-foreground font-medium text-xs">{c.responsavel_nome}</span>
-                          </div>
-                        )}
-
-                        {/* Descrição */}
-                        {c.descricao && (
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-1">Descrição</p>
-                            <p className="text-sm text-foreground whitespace-pre-wrap bg-muted/50 p-3 rounded-lg">
-                              {c.descricao}
-                            </p>
-                          </div>
-                        )}
-
-                        {/* Comentários */}
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                            <MessageSquare className="h-3 w-3" />
-                            Comentários do Jira
-                            {isSyncing && (
-                              <Loader2 className="h-3 w-3 animate-spin ml-1 text-muted-foreground" />
-                            )}
-                          </p>
-
-                          {comentarios.length > 0 ? (
-                            <div className="space-y-2">
-                              {comentarios.map((com: any, ci: number) => (
-                                <div key={ci} className="bg-muted/50 p-3 rounded-lg">
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-medium text-foreground flex items-center gap-1">
-                                      <User className="h-3 w-3" />
-                                      {com.autor}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">{com.data}</span>
-                                  </div>
-                                  <p className="text-sm text-foreground whitespace-pre-wrap">{com.texto}</p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-xs text-muted-foreground">
-                              {isSyncing
-                                ? "Buscando comentários no Jira..."
-                                : "Sem comentários ainda."}
-                            </p>
-                          )}
-                        </div>
-                      </motion.div>
+        {/* MODO KANBAN */}
+        {viewMode === "kanban" && (
+          <motion.div key="kanban" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <div className="flex gap-3 overflow-x-auto pb-4">
+              {kanbanColunas.map(({ status, chamados: cols }) => (
+                <div key={status} className="flex-shrink-0 w-72">
+                  {/* Header da coluna */}
+                  <div className={`flex items-center justify-between p-3 rounded-t-lg border-t-2 border-x ${STATUS_HEADER_COLORS[status]}`}>
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLORS[status]}`}>{status}</span>
+                    <span className="text-xs font-medium text-muted-foreground bg-background/60 rounded-full px-2 py-0.5">
+                      {cols.length}
+                    </span>
+                  </div>
+                  {/* Cards da coluna */}
+                  <div className={`border-x border-b rounded-b-lg p-2 space-y-2 min-h-[200px] ${STATUS_HEADER_COLORS[status]} bg-opacity-30`}>
+                    {cols.length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center py-6 opacity-60">Nenhum chamado</p>
                     )}
-                  </CardContent>
-                </Card>
-              </motion.div>
-            );
-          })}
-        </div>
-      )}
+                    {cols.map((c, i) => (
+                      <motion.div key={c.id} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+                        <ChamadoCard
+                          c={c}
+                          onEdit={openEdit}
+                          onDelete={(id: string) => setDeletingId(id)}
+                          onStatusChange={handleStatusChange}
+                          onSync={syncJiraIssue}
+                          canEdit={canEditChamados}
+                          isSyncing={syncingId === c.id}
+                          isUpdatingStatus={updatingStatusId === c.id}
+                        />
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Modal de Edição */}
       <Dialog open={!!editingId} onOpenChange={(o) => !o && setEditingId(null)}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Editar Chamado</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Editar Chamado</DialogTitle></DialogHeader>
           <div className="space-y-4 mt-2">
             <div className="space-y-2">
               <Label>Título</Label>
-              <Input
-                value={editForm.titulo}
-                onChange={(e) => setEditForm({ ...editForm, titulo: e.target.value })}
-              />
+              <Input value={editForm.titulo} onChange={(e) => setEditForm({ ...editForm, titulo: e.target.value })} />
             </div>
             <div className="space-y-2">
               <Label>Status</Label>
-              <Select
-                value={editForm.status_jira}
-                onValueChange={(v) => setEditForm({ ...editForm, status_jira: v })}
-              >
+              <Select value={editForm.status_jira} onValueChange={(v) => setEditForm({ ...editForm, status_jira: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((s) => (
-                    <SelectItem key={s} value={s}>{s}</SelectItem>
-                  ))}
-                </SelectContent>
+                <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-2">
               <Label>Responsável</Label>
-              <Input
-                value={editForm.responsavel_nome}
-                onChange={(e) => setEditForm({ ...editForm, responsavel_nome: e.target.value })}
-                placeholder="Nome do responsável pelo chamado"
-              />
+              <Input value={editForm.responsavel_nome} onChange={(e) => setEditForm({ ...editForm, responsavel_nome: e.target.value })} placeholder="Nome do responsável" />
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setEditingId(null)}>Cancelar</Button>
@@ -595,16 +500,11 @@ const ListaChamados = () => {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Excluir chamado?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Esta ação não pode ser desfeita. O chamado será removido do sistema,
-              mas a issue no Jira permanecerá.
-            </AlertDialogDescription>
+            <AlertDialogDescription>Esta ação não pode ser desfeita. O chamado será removido do sistema, mas a issue no Jira permanecerá.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Excluir
-            </AlertDialogAction>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Excluir</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
