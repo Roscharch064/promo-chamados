@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useChamados } from "@/hooks/usePromoBank";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp, MessageSquare } from "lucide-react";
+import { Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp, MessageSquare, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -36,12 +36,15 @@ const STATUS_COLORS: Record<string, string> = {
   "Concluído": "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 };
 
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+
 const ListaChamados = () => {
-  const { data: chamados, isLoading } = useChamados();
+  const { data: chamados, isLoading, refetch, isFetching } = useChamados();
   const qc = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{
     titulo: string;
     status_jira: string;
@@ -57,16 +60,65 @@ const ListaChamados = () => {
     setEditingId(c.id);
   };
 
+  const handleStatusChange = async (chamadoId: string, novoStatus: string, jiraKey: string | null) => {
+    setUpdatingStatusId(chamadoId);
+    try {
+      const { error: supabaseError } = await supabase
+        .from("chamados")
+        .update({ status_jira: novoStatus, updated_at: new Date().toISOString() })
+        .eq("id", chamadoId);
+
+      if (supabaseError) throw supabaseError;
+
+      if (jiraKey) {
+        const { data: { session } } = await supabase.auth.getSession();
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/update-jira-status`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(session?.access_token
+              ? { Authorization: `Bearer ${session.access_token}` }
+              : {}),
+          },
+          body: JSON.stringify({ chamado_id: chamadoId, novo_status: novoStatus }),
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          console.warn("Falha ao sincronizar com Jira:", result);
+          toast.warning(`Status atualizado no app, mas falhou no Jira: ${result.error ?? "erro desconhecido"}`);
+        } else {
+          toast.success(`Status atualizado para "${novoStatus}" no app e no Jira ✓`);
+        }
+      } else {
+        toast.success(`Status atualizado para "${novoStatus}"`);
+      }
+
+      qc.invalidateQueries({ queryKey: ["chamados"] });
+    } catch (err: any) {
+      toast.error(`Erro ao atualizar status: ${err?.message ?? "erro desconhecido"}`);
+    } finally {
+      setUpdatingStatusId(null);
+    }
+  };
+
   const handleSaveEdit = async () => {
     if (!editingId) return;
+    const chamado = chamados?.find((c) => c.id === editingId);
+
+    if (chamado && chamado.status_jira !== editForm.status_jira) {
+      await handleStatusChange(editingId, editForm.status_jira, chamado.jira_key);
+    }
+
     const { error } = await supabase
       .from("chamados")
       .update({
         titulo: editForm.titulo,
-        status_jira: editForm.status_jira,
         responsavel_nome: editForm.responsavel_nome || null,
       })
       .eq("id", editingId);
+
     if (error) {
       toast.error("Erro ao salvar alterações");
     } else {
@@ -88,6 +140,11 @@ const ListaChamados = () => {
     setDeletingId(null);
   };
 
+  const handleManualRefresh = async () => {
+    await refetch();
+    toast.success("Chamados atualizados!");
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -98,11 +155,24 @@ const ListaChamados = () => {
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div>
-        <h2 className="text-2xl font-bold text-foreground">Chamados</h2>
-        <p className="text-muted-foreground text-sm mt-1">
-          {chamados?.length ?? 0} chamados registrados
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">Chamados</h2>
+          <p className="text-muted-foreground text-sm mt-1">
+            {chamados?.length ?? 0} chamados registrados
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleManualRefresh}
+          disabled={isFetching}
+          className="flex items-center gap-2"
+          title="Sincronizar com Jira"
+        >
+          <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
+          Sincronizar
+        </Button>
       </div>
 
       {!chamados?.length ? (
@@ -117,6 +187,7 @@ const ListaChamados = () => {
           {chamados.map((c, i) => {
             const isExpanded = expandedId === c.id;
             const comentarios = Array.isArray(c.comentarios) ? c.comentarios : [];
+            const isUpdatingStatus = updatingStatusId === c.id;
 
             return (
               <motion.div
@@ -141,9 +212,34 @@ const ListaChamados = () => {
                               {c.modulo}
                             </span>
                           )}
-                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[c.status_jira ?? "Aberto"] ?? "bg-muted text-muted-foreground"}`}>
-                            {c.status_jira ?? "Aberto"}
-                          </span>
+
+                          {isUpdatingStatus ? (
+                            <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              Atualizando...
+                            </span>
+                          ) : (
+                            <Select
+                              value={c.status_jira ?? "Aberto"}
+                              onValueChange={(v) => handleStatusChange(c.id, v, c.jira_key)}
+                              disabled={isUpdatingStatus}
+                            >
+                              <SelectTrigger className="h-auto border-0 shadow-none p-0 focus:ring-0 focus:ring-offset-0 bg-transparent w-auto">
+                                <span className={`text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer hover:opacity-80 transition-opacity ${STATUS_COLORS[c.status_jira ?? "Aberto"] ?? "bg-muted text-muted-foreground"}`}>
+                                  {c.status_jira ?? "Aberto"}
+                                </span>
+                              </SelectTrigger>
+                              <SelectContent>
+                                {STATUS_OPTIONS.map((s) => (
+                                  <SelectItem key={s} value={s}>
+                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[s]}`}>
+                                      {s}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
                         </div>
 
                         <h3 className="font-semibold text-foreground text-sm truncate">{c.titulo}</h3>
@@ -198,7 +294,6 @@ const ListaChamados = () => {
                       </div>
                     </div>
 
-                    {/* Painel expandido */}
                     {isExpanded && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
@@ -250,7 +345,6 @@ const ListaChamados = () => {
         </div>
       )}
 
-      {/* Modal de Edição */}
       <Dialog open={!!editingId} onOpenChange={(o) => !o && setEditingId(null)}>
         <DialogContent>
           <DialogHeader>
@@ -294,7 +388,6 @@ const ListaChamados = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Confirmação de Exclusão */}
       <AlertDialog open={!!deletingId} onOpenChange={(o) => !o && setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
