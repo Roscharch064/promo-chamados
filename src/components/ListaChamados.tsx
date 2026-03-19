@@ -25,7 +25,9 @@ const STATUS_OPTIONS = [
   "Aberto",
   "Em Atendimento",
   "Aguardando Suporte",
+  "Aguardando Solicitante",
   "Aguardando Desenvolvimento",
+  "Em Backlog de Melhorias",
   "Concluído",
 ];
 
@@ -33,7 +35,9 @@ const STATUS_COLORS: Record<string, string> = {
   "Aberto": "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
   "Em Atendimento": "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   "Aguardando Suporte": "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+  "Aguardando Solicitante": "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
   "Aguardando Desenvolvimento": "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+  "Em Backlog de Melhorias": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
   "Concluído": "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 };
 
@@ -41,7 +45,9 @@ const STATUS_HEADER_COLORS: Record<string, string> = {
   "Aberto": "border-blue-400 bg-blue-50 dark:bg-blue-950",
   "Em Atendimento": "border-yellow-400 bg-yellow-50 dark:bg-yellow-950",
   "Aguardando Suporte": "border-orange-400 bg-orange-50 dark:bg-orange-950",
+  "Aguardando Solicitante": "border-amber-400 bg-amber-50 dark:bg-amber-950",
   "Aguardando Desenvolvimento": "border-purple-400 bg-purple-50 dark:bg-purple-950",
+  "Em Backlog de Melhorias": "border-indigo-400 bg-indigo-50 dark:bg-indigo-950",
   "Concluído": "border-green-400 bg-green-50 dark:bg-green-950",
 };
 
