@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useChamados } from "@/hooks/usePromoBank";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -43,6 +44,7 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 const ListaChamados = () => {
   const { data: chamados, isLoading, refetch, isFetching } = useChamados();
+  const { canEditChamados } = useAuth();
   const qc = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -377,22 +379,26 @@ const ListaChamados = () => {
                               ? <ChevronUp className="h-3.5 w-3.5" />
                               : <ChevronDown className="h-3.5 w-3.5" />}
                           </Button>
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-7 w-7"
-                            onClick={() => openEdit(c)}
-                            title="Editar"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost" size="icon"
-                            className="h-7 w-7 text-destructive hover:text-destructive"
-                            onClick={() => setDeletingId(c.id)}
-                            title="Excluir"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
+                          {canEditChamados && (
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7"
+                              onClick={() => openEdit(c)}
+                              title="Editar"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {canEditChamados && (
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7 text-destructive hover:text-destructive"
+                              onClick={() => setDeletingId(c.id)}
+                              title="Excluir"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     </div>
