@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useChamados } from "@/hooks/usePromoBank";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
-import { Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp, MessageSquare, RefreshCw } from "lucide-react";
+import {
+  Loader2, ExternalLink, Pencil, Trash2,
+  ChevronDown, ChevronUp, MessageSquare, RefreshCw, User,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
@@ -45,11 +48,56 @@ const ListaChamados = () => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<{
     titulo: string;
     status_jira: string;
     responsavel_nome: string;
   }>({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
+
+  // Sync comentários + responsável + status de uma issue específica
+  const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
+    if (!jiraKey) return;
+    setSyncingId(chamadoId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/sync-jira-issue`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ chamado_id: chamadoId }),
+      });
+
+      const result = await res.json();
+
+      if (!res.ok) {
+        if (!silent) toast.error(`Falha ao sincronizar com Jira: ${result.error ?? "erro desconhecido"}`);
+      } else {
+        qc.invalidateQueries({ queryKey: ["chamados"] });
+        if (!silent) {
+          toast.success(
+            `Sincronizado! ${result.total_comentarios} comentário(s) · Responsável: ${result.responsavel_nome ?? "não atribuído"}`
+          );
+        }
+      }
+    } catch (err: any) {
+      if (!silent) toast.error(`Erro ao sincronizar: ${err?.message ?? "erro desconhecido"}`);
+    } finally {
+      setSyncingId(null);
+    }
+  }, [qc]);
+
+  // Ao expandir, faz sync automático silencioso
+  const handleToggleExpand = (chamadoId: string, jiraKey: string | null) => {
+    if (expandedId === chamadoId) {
+      setExpandedId(null);
+    } else {
+      setExpandedId(chamadoId);
+      if (jiraKey) syncJiraIssue(chamadoId, jiraKey, true);
+    }
+  };
 
   const openEdit = (c: any) => {
     setEditForm({
@@ -76,17 +124,13 @@ const ListaChamados = () => {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(session?.access_token
-              ? { Authorization: `Bearer ${session.access_token}` }
-              : {}),
+            ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
           },
           body: JSON.stringify({ chamado_id: chamadoId, novo_status: novoStatus }),
         });
 
         const result = await res.json();
-
         if (!res.ok) {
-          console.warn("Falha ao sincronizar com Jira:", result);
           toast.warning(`Status atualizado no app, mas falhou no Jira: ${result.error ?? "erro desconhecido"}`);
         } else {
           toast.success(`Status atualizado para "${novoStatus}" no app e no Jira ✓`);
@@ -168,7 +212,6 @@ const ListaChamados = () => {
           onClick={handleManualRefresh}
           disabled={isFetching}
           className="flex items-center gap-2"
-          title="Sincronizar com Jira"
         >
           <RefreshCw className={`h-4 w-4 ${isFetching ? "animate-spin" : ""}`} />
           Sincronizar
@@ -186,8 +229,9 @@ const ListaChamados = () => {
         <div className="space-y-3">
           {chamados.map((c, i) => {
             const isExpanded = expandedId === c.id;
-            const comentarios = Array.isArray(c.comentarios) ? c.comentarios : [];
+            const isSyncing = syncingId === c.id;
             const isUpdatingStatus = updatingStatusId === c.id;
+            const comentarios = Array.isArray(c.comentarios) ? c.comentarios : [];
 
             return (
               <motion.div
@@ -200,6 +244,7 @@ const ListaChamados = () => {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between gap-4">
                       <div className="flex-1 min-w-0">
+                        {/* Badges de tipo, módulo e status */}
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <Badge variant={
                             c.tipo === "bug" ? "destructive" :
@@ -222,7 +267,6 @@ const ListaChamados = () => {
                             <Select
                               value={c.status_jira ?? "Aberto"}
                               onValueChange={(v) => handleStatusChange(c.id, v, c.jira_key)}
-                              disabled={isUpdatingStatus}
                             >
                               <SelectTrigger className="h-auto border-0 shadow-none p-0 focus:ring-0 focus:ring-offset-0 bg-transparent w-auto">
                                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer hover:opacity-80 transition-opacity ${STATUS_COLORS[c.status_jira ?? "Aberto"] ?? "bg-muted text-muted-foreground"}`}>
@@ -246,8 +290,19 @@ const ListaChamados = () => {
 
                         <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground mt-1">
                           <span>Relator: {c.relator_nome}</span>
-                          {c.responsavel_nome && <span>• Responsável: {c.responsavel_nome}</span>}
+                          {c.responsavel_nome && (
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              {c.responsavel_nome}
+                            </span>
+                          )}
                           <span>• {new Date(c.created_at).toLocaleDateString("pt-BR")}</span>
+                          {comentarios.length > 0 && (
+                            <span className="flex items-center gap-1">
+                              <MessageSquare className="h-3 w-3" />
+                              {comentarios.length}
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -264,10 +319,22 @@ const ListaChamados = () => {
                           </a>
                         )}
                         <div className="flex items-center gap-1 mt-1">
+                          {/* Botão sync manual por chamado */}
+                          {c.jira_key && (
+                            <Button
+                              variant="ghost" size="icon"
+                              className="h-7 w-7"
+                              onClick={() => syncJiraIssue(c.id, c.jira_key)}
+                              disabled={isSyncing}
+                              title="Sincronizar com Jira"
+                            >
+                              <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin" : ""}`} />
+                            </Button>
+                          )}
                           <Button
                             variant="ghost" size="icon"
                             className="h-7 w-7"
-                            onClick={() => setExpandedId(isExpanded ? null : c.id)}
+                            onClick={() => handleToggleExpand(c.id, c.jira_key)}
                             title="Ver detalhes"
                           >
                             {isExpanded
@@ -294,12 +361,23 @@ const ListaChamados = () => {
                       </div>
                     </div>
 
+                    {/* Painel expandido */}
                     {isExpanded && (
                       <motion.div
                         initial={{ opacity: 0, height: 0 }}
                         animate={{ opacity: 1, height: "auto" }}
-                        className="mt-4 pt-4 border-t border-border space-y-3"
+                        className="mt-4 pt-4 border-t border-border space-y-4"
                       >
+                        {/* Responsável */}
+                        {c.responsavel_nome && (
+                          <div className="flex items-center gap-2 text-sm">
+                            <User className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <span className="text-muted-foreground text-xs">Responsável no Jira:</span>
+                            <span className="text-foreground font-medium text-xs">{c.responsavel_nome}</span>
+                          </div>
+                        )}
+
+                        {/* Descrição */}
                         {c.descricao && (
                           <div>
                             <p className="text-xs font-medium text-muted-foreground mb-1">Descrição</p>
@@ -309,32 +387,39 @@ const ListaChamados = () => {
                           </div>
                         )}
 
-                        {comentarios.length > 0 && (
-                          <div>
-                            <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
-                              <MessageSquare className="h-3 w-3" />
-                              Comentários ({comentarios.length})
-                            </p>
+                        {/* Comentários */}
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-2 flex items-center gap-1">
+                            <MessageSquare className="h-3 w-3" />
+                            Comentários do Jira
+                            {isSyncing && (
+                              <Loader2 className="h-3 w-3 animate-spin ml-1 text-muted-foreground" />
+                            )}
+                          </p>
+
+                          {comentarios.length > 0 ? (
                             <div className="space-y-2">
                               {comentarios.map((com: any, ci: number) => (
                                 <div key={ci} className="bg-muted/50 p-3 rounded-lg">
                                   <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-medium text-foreground">{com.autor}</span>
+                                    <span className="text-xs font-medium text-foreground flex items-center gap-1">
+                                      <User className="h-3 w-3" />
+                                      {com.autor}
+                                    </span>
                                     <span className="text-xs text-muted-foreground">{com.data}</span>
                                   </div>
-                                  <p className="text-sm text-foreground">{com.texto}</p>
+                                  <p className="text-sm text-foreground whitespace-pre-wrap">{com.texto}</p>
                                 </div>
                               ))}
                             </div>
-                          </div>
-                        )}
-
-                        {comentarios.length === 0 && (
-                          <p className="text-xs text-muted-foreground flex items-center gap-1">
-                            <MessageSquare className="h-3 w-3" />
-                            Sem comentários ainda. Os comentários do Jira aparecerão aqui após sincronização.
-                          </p>
-                        )}
+                          ) : (
+                            <p className="text-xs text-muted-foreground">
+                              {isSyncing
+                                ? "Buscando comentários no Jira..."
+                                : "Sem comentários ainda."}
+                            </p>
+                          )}
+                        </div>
                       </motion.div>
                     )}
                   </CardContent>
@@ -345,6 +430,7 @@ const ListaChamados = () => {
         </div>
       )}
 
+      {/* Modal de Edição */}
       <Dialog open={!!editingId} onOpenChange={(o) => !o && setEditingId(null)}>
         <DialogContent>
           <DialogHeader>
@@ -388,6 +474,7 @@ const ListaChamados = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Confirmação de Exclusão */}
       <AlertDialog open={!!deletingId} onOpenChange={(o) => !o && setDeletingId(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
