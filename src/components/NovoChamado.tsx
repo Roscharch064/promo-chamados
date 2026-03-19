@@ -134,12 +134,21 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     if (!validarCampos()) return;
     setIsProcessing(true);
     try {
+      // Passa os nomes dos arquivos selecionados para a IA incluir na seção de evidências
+      // As URLs reais virão após o upload — por agora a IA recebe os nomes como placeholder
+      const evidenciasParaIA = evidencias.map(ev => ({
+        nome: ev.file.name,
+        url: "#pendente-upload",
+        tipo: ev.file.type,
+      }));
+
       const { data, error } = await supabase.functions.invoke("format-chamado", {
         body: {
           descricao, tipo, modulo,
           empresa_afetada: tipo === "bug" ? empresaAfetada : undefined,
           login_afetado: tipo === "bug" ? loginAfetado : undefined,
           solicitante_nome: tipo !== "bug" ? solicitanteNome : undefined,
+          evidencias: evidenciasParaIA.length > 0 ? evidenciasParaIA : undefined,
         },
       });
       if (error) throw error;
@@ -201,30 +210,60 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
       const { data: { session } } = await supabase.auth.getSession();
       const emailLogado = session?.user?.email ?? null;
 
-      const chamado = await createChamado.mutateAsync({
+      // 1. Faz upload das evidências primeiro para ter as URLs
+      let evidenciasData: any[] = [];
+      const chamadoTemp = await createChamado.mutateAsync({
         tipo,
-        titulo,
-        descricao: descFormatada,
+        titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`, // título provisório
+        descricao,
         modulo: modulo || null,
         relator_nome: relator.nome,
         relator_account_id: relator.account_id_jira,
         aberto_por_email: emailLogado,
-        prioridade,
+        prioridade: "Medium",
         origem: "app_direto",
         empresa_afetada: tipo === "bug" ? empresaAfetada || null : null,
         login_afetado: tipo === "bug" ? loginAfetado || null : null,
         solicitante_nome: tipo !== "bug" ? solicitanteNome || null : null,
       } as any);
 
-      // Upload das evidências
-      let evidenciasData: any[] = [];
       if (evidencias.length > 0) {
         toast.info("Enviando evidências...");
-        evidenciasData = await uploadEvidencias(chamado.id);
+        evidenciasData = await uploadEvidencias(chamadoTemp.id);
         if (evidenciasData.length > 0) {
-          await supabase.from("chamados").update({ evidencias: evidenciasData }).eq("id", chamado.id);
+          await supabase.from("chamados").update({ evidencias: evidenciasData }).eq("id", chamadoTemp.id);
         }
       }
+
+      // 2. Formata com IA passando as evidências já com URLs
+      const titulo = aiResult?.titulo ?? `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
+      const prioridade = aiResult?.prioridade ?? "Medium";
+
+      // Substitui os placeholders "#pendente-upload" pelas URLs reais das evidências
+      let descFormatada = aiResult?.descricaoFormatada ?? descricao;
+      if (evidenciasData.length > 0) {
+        evidenciasData.forEach((ev: any) => {
+          descFormatada = descFormatada.replace(
+            `[${ev.nome}](#pendente-upload)`,
+            `[${ev.nome}](${ev.url})`
+          );
+        });
+        // Fallback: se não encontrou placeholder, adiciona seção no final
+        if (descFormatada.includes("#pendente-upload")) {
+          const linksEvidencias = evidenciasData.map((ev: any) => `- [${ev.nome}](${ev.url})`).join("\n");
+          descFormatada = descFormatada.replace(/#pendente-upload/g, evidenciasData[0]?.url ?? "#");
+        }
+      }
+
+      // 3. Atualiza o chamado com título e descrição finais
+      await supabase.from("chamados").update({
+        titulo,
+        descricao: descFormatada,
+        prioridade,
+        status_jira: "Aberto",
+      }).eq("id", chamadoTemp.id);
+
+      const chamado = { ...chamadoTemp, id: chamadoTemp.id };
 
       // Cria issue no Jira
       if (relator.jira_email && relator.jira_api_token) {
