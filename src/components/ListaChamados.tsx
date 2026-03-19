@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, ExternalLink, Pencil, Trash2,
-  ChevronDown, ChevronUp, MessageSquare, RefreshCw, User,
+  ChevronDown, ChevronUp, MessageSquare, RefreshCw, User, Search, X,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -53,6 +53,11 @@ const ListaChamados = () => {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const lastSyncRef = useRef<number>(0);
+
+  // Filtros
+  const [filtroTexto, setFiltroTexto] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
   const [editForm, setEditForm] = useState<{
     titulo: string;
     status_jira: string;
@@ -92,6 +97,28 @@ const ListaChamados = () => {
       setSyncingId(null);
     }
   }, [qc]);
+
+  // Filtros
+  const [filtroTexto, setFiltroTexto] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+
+  const chamadosFiltrados = useMemo(() => {
+    if (!chamados) return [];
+    return chamados.filter(c => {
+      const matchTexto = !filtroTexto ||
+        c.titulo.toLowerCase().includes(filtroTexto.toLowerCase()) ||
+        (c.relator_nome?.toLowerCase().includes(filtroTexto.toLowerCase())) ||
+        (c.jira_key?.toLowerCase().includes(filtroTexto.toLowerCase())) ||
+        ((c as any).empresa_afetada?.toLowerCase().includes(filtroTexto.toLowerCase()));
+      const matchStatus = filtroStatus === "todos" || c.status_jira === filtroStatus;
+      const matchTipo = filtroTipo === "todos" || c.tipo === filtroTipo;
+      return matchTexto && matchStatus && matchTipo;
+    });
+  }, [chamados, filtroTexto, filtroStatus, filtroTipo]);
+
+  const limparFiltros = () => { setFiltroTexto(""); setFiltroStatus("todos"); setFiltroTipo("todos"); };
+  const temFiltro = filtroTexto || filtroStatus !== "todos" || filtroTipo !== "todos";
 
   // Sync de todos os chamados com jira_key (chamado automaticamente a cada 5 min)
   const syncAllJiraIssues = useCallback(async (silent = true) => {
@@ -241,7 +268,7 @@ const ListaChamados = () => {
         <div>
           <h2 className="text-2xl font-bold text-foreground">Chamados</h2>
           <p className="text-muted-foreground text-sm mt-1">
-            {chamados?.length ?? 0} chamados registrados
+            {chamadosFiltrados.length} de {chamados?.length ?? 0} chamados
           </p>
         </div>
         <Button
@@ -256,16 +283,63 @@ const ListaChamados = () => {
         </Button>
       </div>
 
-      {!chamados?.length ? (
+      {/* Filtros */}
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            className="pl-8 h-8 text-xs"
+            placeholder="Buscar por título, relator, Jira..."
+            value={filtroTexto}
+            onChange={(e) => setFiltroTexto(e.target.value)}
+          />
+        </div>
+        <Select value={filtroStatus} onValueChange={setFiltroStatus}>
+          <SelectTrigger className="h-8 text-xs w-auto min-w-[140px]">
+            <SelectValue placeholder="Status" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos" className="text-xs">Todos os status</SelectItem>
+            {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s} className="text-xs">{s}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={filtroTipo} onValueChange={setFiltroTipo}>
+          <SelectTrigger className="h-8 text-xs w-auto min-w-[120px]">
+            <SelectValue placeholder="Tipo" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todos" className="text-xs">Todos os tipos</SelectItem>
+            <SelectItem value="bug" className="text-xs">Bug</SelectItem>
+            <SelectItem value="melhoria" className="text-xs">Melhoria</SelectItem>
+            <SelectItem value="solicitacao" className="text-xs">Solicitação</SelectItem>
+          </SelectContent>
+        </Select>
+        {temFiltro && (
+          <Button variant="ghost" size="sm" onClick={limparFiltros} className="h-8 gap-1 text-xs text-muted-foreground">
+            <X className="h-3 w-3" /> Limpar
+          </Button>
+        )}
+      </div>
+
+      {!chamadosFiltrados.length ? (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <p className="text-lg font-medium">Nenhum chamado ainda</p>
-            <p className="text-sm mt-1">Crie o primeiro chamado na aba "Novo Chamado"</p>
+            {temFiltro ? (
+              <>
+                <p className="text-lg font-medium">Nenhum chamado encontrado</p>
+                <p className="text-sm mt-1">Tente ajustar os filtros</p>
+              </>
+            ) : (
+              <>
+                <p className="text-lg font-medium">Nenhum chamado ainda</p>
+                <p className="text-sm mt-1">Crie o primeiro chamado na aba "Novo Chamado"</p>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (
         <div className="space-y-3">
-          {chamados.map((c, i) => {
+          {chamadosFiltrados.map((c, i) => {
             const isExpanded = expandedId === c.id;
             const isSyncing = syncingId === c.id;
             const isUpdatingStatus = updatingStatusId === c.id;
