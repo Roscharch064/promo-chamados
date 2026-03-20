@@ -69,7 +69,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
   const [solicitanteNome, setSolicitanteNome] = useState("");
   const [evidencias, setEvidencias] = useState<Evidencia[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [aiResult, setAiResult] = useState<{ titulo: string; descricaoFormatada: string; prioridade: string } | null>(null);
+  const [aiResult, setAiResult] = useState<{ titulo: string; descricaoFormatada: string; prioridade: string; viaFallback?: boolean } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const createChamado = useCreateChamado();
@@ -85,7 +85,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
 
   const handleFileSelect = useCallback((files: FileList | null) => {
     if (!files) return;
-    const MAX_SIZE = 100 * 1024 * 1024; // 100 MB
+    const MAX_SIZE = 100 * 1024 * 1024;
     const novos: Evidencia[] = [];
 
     Array.from(files).forEach(file => {
@@ -134,8 +134,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     if (!validarCampos()) return;
     setIsProcessing(true);
     try {
-      // Passa os nomes dos arquivos selecionados para a IA incluir na seção de evidências
-      // As URLs reais virão após o upload — por agora a IA recebe os nomes como placeholder
       const evidenciasParaIA = evidencias.map(ev => ({
         nome: ev.file.name,
         url: "#pendente-upload",
@@ -151,21 +149,33 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
           evidencias: evidenciasParaIA.length > 0 ? evidenciasParaIA : undefined,
         },
       });
+
       if (error) throw error;
+
       setAiResult({
         titulo: data.titulo,
         descricaoFormatada: data.descricao_formatada || descricao,
         prioridade: data.prioridade || "Medium",
+        viaFallback: !!data.via_fallback,
       });
+
       if (data.modulo_inferido && !modulo) setModulo(data.modulo_inferido);
-      toast.success("Chamado formatado pela IA!");
+
+      // Toast correto conforme resultado real
+      if (data.via_fallback) {
+        toast.info("Formatação básica aplicada — IA indisponível no momento.");
+      } else {
+        toast.success("Chamado formatado pela IA!");
+      }
     } catch {
+      // Erro total: fallback local
       setAiResult({
         titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`,
         descricaoFormatada: descricao,
         prioridade: tipo === "bug" ? "High" : "Medium",
+        viaFallback: true,
       });
-      toast.info("Formatação local aplicada (IA indisponível)");
+      toast.warning("Não foi possível acessar a IA. Formatação básica aplicada.");
     } finally {
       setIsProcessing(false);
     }
@@ -177,7 +187,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
       const ev = evidencias[i];
       setEvidencias(prev => prev.map((e, idx) => idx === i ? { ...e, uploading: true } : e));
       try {
-        const ext = ev.file.name.split(".").pop();
         const path = `${chamadoId}/${Date.now()}_${ev.file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
         const { error } = await supabase.storage.from("evidencias").upload(path, ev.file);
         if (error) throw error;
@@ -203,18 +212,16 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
     if (!relator) { toast.error("Selecione o relator"); return; }
 
     const titulo = aiResult?.titulo ?? `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
-    const descFormatada = aiResult?.descricaoFormatada ?? descricao;
+    const descFormatadaBase = aiResult?.descricaoFormatada ?? descricao;
     const prioridade = aiResult?.prioridade ?? "Medium";
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const emailLogado = session?.user?.email ?? null;
 
-      // 1. Faz upload das evidências primeiro para ter as URLs
-      let evidenciasData: any[] = [];
       const chamadoTemp = await createChamado.mutateAsync({
         tipo,
-        titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`, // título provisório
+        titulo: `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`,
         descricao,
         modulo: modulo || null,
         relator_nome: relator.nome,
@@ -227,6 +234,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         solicitante_nome: tipo !== "bug" ? solicitanteNome || null : null,
       } as any);
 
+      let evidenciasData: any[] = [];
       if (evidencias.length > 0) {
         toast.info("Enviando evidências...");
         evidenciasData = await uploadEvidencias(chamadoTemp.id);
@@ -235,12 +243,7 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         }
       }
 
-      // 2. Formata com IA passando as evidências já com URLs
-      const titulo = aiResult?.titulo ?? `[${modulo || "Geral"}]: ${descricao.slice(0, 70)}`;
-      const prioridade = aiResult?.prioridade ?? "Medium";
-
-      // Substitui os placeholders "#pendente-upload" pelas URLs reais das evidências
-      let descFormatada = aiResult?.descricaoFormatada ?? descricao;
+      let descFormatada = descFormatadaBase;
       if (evidenciasData.length > 0) {
         evidenciasData.forEach((ev: any) => {
           descFormatada = descFormatada.replace(
@@ -248,14 +251,11 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
             `[${ev.nome}](${ev.url})`
           );
         });
-        // Fallback: se não encontrou placeholder, adiciona seção no final
         if (descFormatada.includes("#pendente-upload")) {
-          const linksEvidencias = evidenciasData.map((ev: any) => `- [${ev.nome}](${ev.url})`).join("\n");
           descFormatada = descFormatada.replace(/#pendente-upload/g, evidenciasData[0]?.url ?? "#");
         }
       }
 
-      // 3. Atualiza o chamado com título e descrição finais
       await supabase.from("chamados").update({
         titulo,
         descricao: descFormatada,
@@ -263,9 +263,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         status_jira: "Aberto",
       }).eq("id", chamadoTemp.id);
 
-      const chamado = { ...chamadoTemp, id: chamadoTemp.id };
-
-      // Cria issue no Jira
       if (relator.jira_email && relator.jira_api_token) {
         try {
           const { data: jiraData, error: jiraError } = await supabase.functions.invoke("create-jira-issue", {
@@ -279,13 +276,12 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
               empresa_afetada: tipo === "bug" ? empresaAfetada : undefined,
               login_afetado: tipo === "bug" ? loginAfetado : undefined,
               solicitante_nome: tipo !== "bug" ? solicitanteNome : undefined,
-              // Passa as evidências já uploadadas para serem adicionadas como comentário no Jira
               evidencias: evidenciasData.length > 0 ? evidenciasData : undefined,
             },
           });
           if (jiraError) throw jiraError;
           if (jiraData?.jira_key) {
-            await supabase.from("chamados").update({ jira_key: jiraData.jira_key, status_jira: "Aberto" }).eq("id", chamado.id);
+            await supabase.from("chamados").update({ jira_key: jiraData.jira_key, status_jira: "Aberto" }).eq("id", chamadoTemp.id);
             toast.success(`Chamado criado! Issue ${jiraData.jira_key} aberta no Jira${evidenciasData.length > 0 ? ` com ${evidenciasData.length} evidência(s)` : ""}.`);
           }
         } catch {
@@ -295,7 +291,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         toast.success(`Chamado criado${evidenciasData.length > 0 ? ` com ${evidenciasData.length} evidência(s)` : ""}!`);
       }
 
-      // Reset
       setDescricao(""); setAiResult(null); setModulo(""); setRelatorId("");
       setEmpresaAfetada(""); setLoginAfetado(""); setSolicitanteNome("");
       setEvidencias([]);
@@ -306,7 +301,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
   };
 
   const TipoIcon = TIPO_CONFIG[tipo].icon;
-  const isDragging = false;
 
   return (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -395,7 +389,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
                 <span className="text-xs text-muted-foreground font-normal">(fotos, vídeos, docs, planilhas — máx 100 MB cada)</span>
               </Label>
 
-              {/* Zona de drop */}
               <div
                 onDrop={handleDrop}
                 onDragOver={e => e.preventDefault()}
@@ -419,7 +412,6 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
                 />
               </div>
 
-              {/* Lista de arquivos */}
               {evidencias.length > 0 && (
                 <div className="space-y-2">
                   {evidencias.map((ev, i) => {
@@ -460,11 +452,16 @@ const NovoChamado = ({ onSuccess }: NovoChamadoProps) => {
         </Card>
 
         {/* Prévia */}
-        <Card className={aiResult ? "border-primary/50 shadow-lg" : ""}>
+        <Card className={aiResult && !aiResult.viaFallback ? "border-primary/50 shadow-lg" : ""}>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-primary" />
+              <Sparkles className={`h-4 w-4 ${aiResult?.viaFallback ? "text-muted-foreground" : "text-primary"}`} />
               Prévia do Chamado
+              {aiResult?.viaFallback && (
+                <span className="text-xs font-normal text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                  formatação básica
+                </span>
+              )}
             </CardTitle>
           </CardHeader>
           <CardContent>
