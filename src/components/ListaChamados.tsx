@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns, Paperclip,
+  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns, Paperclip, Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -218,6 +218,7 @@ const ListaChamados = () => {
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const lastSyncRef = useRef<number>(0);
   const [editForm, setEditForm] = useState({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
 
@@ -242,6 +243,31 @@ const ListaChamados = () => {
     }));
   }, [chamadosFiltrados]);
 
+  // Importa do Jira (upsert completo)
+  const handleImportarJira = useCallback(async () => {
+    setIsImporting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        body: JSON.stringify({ sync_all: true }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error ?? "Erro desconhecido");
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
+      toast.success(result.mensagem ?? `${result.importados ?? 0} chamados importados!`);
+    } catch (err: any) {
+      toast.error(`Erro ao importar: ${err?.message ?? "erro desconhecido"}`);
+    } finally {
+      setIsImporting(false);
+    }
+  }, [qc, refetch]);
+
   // Sincroniza um chamado individual e recarrega a lista
   const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
     if (!jiraKey) return;
@@ -260,7 +286,6 @@ const ListaChamados = () => {
       if (!res.ok) {
         if (!silent) toast.error(`Falha ao sincronizar: ${result.error ?? "erro"}`);
       } else {
-        // Aguarda invalidação e refetch completo antes de continuar
         await qc.invalidateQueries({ queryKey: ["chamados"] });
         await refetch();
         if (!silent) toast.success("Sincronizado com o Jira!");
@@ -272,7 +297,7 @@ const ListaChamados = () => {
     }
   }, [qc, refetch]);
 
-  // Sincroniza todos os chamados com jira_key em sequência e recarrega a lista ao final
+  // Sincroniza todos os chamados com jira_key em sequência
   const syncAllJiraIssues = useCallback(async (silent = true) => {
     if (!chamados?.length) return;
     const comJira = chamados.filter(c => c.jira_key);
@@ -286,7 +311,6 @@ const ListaChamados = () => {
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
       };
 
-      // Executa em lotes de 5 para não sobrecarregar
       const BATCH_SIZE = 5;
       for (let i = 0; i < comJira.length; i += BATCH_SIZE) {
         const lote = comJira.slice(i, i + BATCH_SIZE);
@@ -302,7 +326,6 @@ const ListaChamados = () => {
       }
 
       lastSyncRef.current = Date.now();
-      // Aguarda o refetch completo para atualizar a UI
       await qc.invalidateQueries({ queryKey: ["chamados"] });
       await refetch();
       if (!silent) toast.success("Chamados sincronizados com o Jira!");
@@ -423,6 +446,25 @@ const ListaChamados = () => {
               <Columns className="h-4 w-4" />
             </Button>
           </div>
+          {/* Importar do Jira */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleImportarJira}
+            disabled={isImporting || isFetching}
+            className="gap-1.5 h-8"
+            title="Importar todos os chamados do Jira"
+          >
+            {isImporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Download className="h-3.5 w-3.5" />
+            )}
+            <span className="hidden sm:inline">
+              {isImporting ? "Importando..." : "Importar Jira"}
+            </span>
+          </Button>
+          {/* Sincronizar */}
           <Button
             variant="outline"
             size="sm"
@@ -517,7 +559,6 @@ const ListaChamados = () => {
         {/* MODO KANBAN */}
         {viewMode === "kanban" && (
           <motion.div key="kanban" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-            {/* Escapa do container pai para ocupar largura total da viewport */}
             <div style={{
               marginLeft: "calc(-50vw + 50%)",
               marginRight: "calc(-50vw + 50%)",
