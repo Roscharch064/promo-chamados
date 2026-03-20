@@ -18,14 +18,16 @@ const STATUS_COLORS: Record<string, string> = {
   "Aberto": "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
   "Em Atendimento": "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200",
   "Aguardando Suporte": "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200",
+  "Aguardando Solicitante": "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200",
   "Aguardando Desenvolvimento": "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200",
+  "Em Backlog de Melhorias": "bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200",
   "Concluído": "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200",
 };
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 const DashboardPanel = () => {
-  const { data: chamados, isLoading } = useChamados();
+  const { data: chamados, isLoading, refetch } = useChamados();
   const { canEditChamados } = useAuth();
   const qc = useQueryClient();
   const [isImporting, setIsImporting] = useState(false);
@@ -34,27 +36,22 @@ const DashboardPanel = () => {
     setIsImporting(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      
-      // Busca o account_id e email do usuário logado
-      const { data: usuario } = await supabase
-        .from("mapeamento_usuarios")
-        .select("account_id_jira, email")
-        .eq("email", session?.user?.email ?? "")
-        .single();
 
       const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          account_id: usuario?.account_id_jira ?? null,
-          email: session?.user?.email ?? null,
-        }),
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
+        // sync_all: true → busca TODOS os chamados ativos do projeto, não só os do usuário logado
+        body: JSON.stringify({ sync_all: true }),
       });
 
       const result = await res.json();
       if (!res.ok) throw new Error(result.error ?? "Erro desconhecido");
 
-      qc.invalidateQueries({ queryKey: ["chamados"] });
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
       toast.success(result.mensagem ?? `${result.importados} chamados importados!`);
     } catch (err: any) {
       toast.error(`Erro ao importar: ${err?.message ?? "erro desconhecido"}`);
@@ -73,7 +70,6 @@ const DashboardPanel = () => {
     const abertos = chamados.filter(c => c.status_jira !== "Concluído");
     const concluidos = chamados.filter(c => c.status_jira === "Concluído");
 
-    // Agrupa por módulo
     const porModulo: Record<string, number> = {};
     chamados.forEach(c => {
       if (c.modulo) porModulo[c.modulo] = (porModulo[c.modulo] ?? 0) + 1;
@@ -82,7 +78,6 @@ const DashboardPanel = () => {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
 
-    // Agrupa por status
     const porStatus: Record<string, number> = {};
     chamados.forEach(c => {
       const s = c.status_jira ?? "Aberto";
@@ -97,8 +92,12 @@ const DashboardPanel = () => {
       melhorias: chamados.filter(c => c.tipo === "melhoria").length,
       solicitacoes: chamados.filter(c => c.tipo === "solicitacao").length,
       emAtendimento: chamados.filter(c => c.status_jira === "Em Atendimento").length,
+      // Inclui todos os status de "aguardando"
       aguardando: chamados.filter(c =>
-        c.status_jira === "Aguardando Suporte" || c.status_jira === "Aguardando Desenvolvimento"
+        c.status_jira === "Aguardando Suporte" ||
+        c.status_jira === "Aguardando Solicitante" ||
+        c.status_jira === "Aguardando Desenvolvimento" ||
+        c.status_jira === "Em Backlog de Melhorias"
       ).length,
       hoje: chamados.filter(c => new Date(c.created_at) >= hoje).length,
       semana: chamados.filter(c => new Date(c.created_at) >= semana).length,
@@ -129,14 +128,22 @@ const DashboardPanel = () => {
     { label: "Total", value: stats.total, icon: TicketCheck, color: "text-primary", sub: `${stats.hoje} hoje` },
     { label: "Em Aberto", value: stats.abertos, icon: AlertCircle, color: "text-orange-500", sub: `${stats.emAtendimento} em atendimento` },
     { label: "Concluídos", value: stats.concluidos, icon: CheckCircle2, color: "text-green-500", sub: `${stats.taxaConclusao}% taxa de conclusão` },
-    { label: "Aguardando", value: stats.aguardando, icon: Clock, color: "text-yellow-500", sub: "suporte ou dev" },
+    { label: "Aguardando", value: stats.aguardando, icon: Clock, color: "text-yellow-500", sub: "suporte, dev ou backlog" },
     { label: "Bugs", value: stats.bugs, icon: Bug, color: "text-red-500", sub: `${stats.total > 0 ? Math.round(stats.bugs / stats.total * 100) : 0}% do total` },
     { label: "Melhorias", value: stats.melhorias, icon: Lightbulb, color: "text-yellow-500", sub: "" },
     { label: "Solicitações", value: stats.solicitacoes, icon: ClipboardList, color: "text-blue-500", sub: "" },
     { label: "Últimos 7 dias", value: stats.semana, icon: TrendingUp, color: "text-primary", sub: `${stats.mes} em 30 dias` },
   ];
 
-  const statusOrder = ["Aberto", "Em Atendimento", "Aguardando Suporte", "Aguardando Desenvolvimento", "Concluído"];
+  const statusOrder = [
+    "Aberto",
+    "Em Atendimento",
+    "Aguardando Suporte",
+    "Aguardando Solicitante",
+    "Aguardando Desenvolvimento",
+    "Em Backlog de Melhorias",
+    "Concluído",
+  ];
 
   return (
     <div className="space-y-6">
@@ -151,7 +158,7 @@ const DashboardPanel = () => {
           onClick={handleImportarJira}
           disabled={isImporting}
           className="gap-2"
-          title="Importar meus chamados do Jira"
+          title="Importar todos os chamados ativos do Jira"
         >
           {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           {isImporting ? "Importando..." : "Importar do Jira"}
