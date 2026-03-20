@@ -29,11 +29,12 @@ async function importarModo(
   mode: "ativas" | "concluidas",
   headers: Record<string, string>,
   onProgress: (msg: string) => void
-): Promise<{ importados: number; atualizados: number }> {
+): Promise<{ importados: number; atualizados: number; allKeys: string[] }> {
   let startAt = 0;
   let pagina = 1;
   let totalImportados = 0;
   let totalAtualizados = 0;
+  const allKeys: string[] = [];
 
   while (true) {
     onProgress(
@@ -49,13 +50,15 @@ async function importarModo(
     });
 
     const result = await res.json();
-
-    if (!res.ok) {
-      throw new Error(result.error ?? "Erro desconhecido");
-    }
+    if (!res.ok) throw new Error(result.error ?? "Erro desconhecido");
 
     totalImportados += result.importados ?? 0;
     totalAtualizados += result.atualizados ?? 0;
+
+    // Acumula todas as keys das concluídas recentes para o cleanup
+    if (mode === "concluidas" && Array.isArray(result.imported_keys)) {
+      allKeys.push(...result.imported_keys);
+    }
 
     if (!result.has_more) break;
 
@@ -64,7 +67,7 @@ async function importarModo(
     await new Promise(r => setTimeout(r, 300));
   }
 
-  return { importados: totalImportados, atualizados: totalAtualizados };
+  return { importados: totalImportados, atualizados: totalAtualizados, allKeys };
 }
 
 const DashboardPanel = () => {
@@ -83,11 +86,28 @@ const DashboardPanel = () => {
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
       };
 
-      // 1. Importa todas as issues ativas (qualquer status exceto Concluído)
+      // 1. Importa todas as issues ativas
       const ativas = await importarModo("ativas", headers, setImportProgress);
 
-      // 2. Importa concluídas dos últimos 90 dias
+      // 2. Importa concluídas dos últimos 90 dias e coleta as keys
       const concluidas = await importarModo("concluidas", headers, setImportProgress);
+
+      // 3. Remove concluídas antigas (não estão nos últimos 90 dias do Jira)
+      if (concluidas.allKeys.length > 0) {
+        setImportProgress("Removendo concluídas antigas...");
+        const cleanRes = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            cleanup: true,
+            keys_to_keep: concluidas.allKeys,
+          }),
+        });
+        const cleanResult = await cleanRes.json();
+        if (cleanResult.removidos > 0) {
+          console.log(`[import] ${cleanResult.removidos} concluídas antigas removidas`);
+        }
+      }
 
       await qc.invalidateQueries({ queryKey: ["chamados"] });
       await refetch();
@@ -192,7 +212,7 @@ const DashboardPanel = () => {
             onClick={importarDoJira}
             disabled={isImporting}
             className="gap-1.5 h-9"
-            title="Importa todas as ativas + concluídas dos últimos 90 dias"
+            title="Importa todas as ativas + concluídas dos últimos 90 dias. Remove concluídas antigas."
           >
             {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             {isImporting ? "Importando..." : "Importar do Jira"}
