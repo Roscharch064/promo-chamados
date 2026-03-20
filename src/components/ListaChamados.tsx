@@ -12,7 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, ExternalLink, Pencil, Trash2, ChevronDown, ChevronUp,
-  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns, Paperclip, Download,
+  MessageSquare, RefreshCw, User, Search, X, LayoutList, Columns, Paperclip, AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -122,14 +122,12 @@ const ChamadoCard = ({
           </div>
         </div>
 
-        {/* Expandido */}
         {expanded && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             className="mt-3 pt-3 border-t border-border space-y-2"
           >
-            {/* Muda status */}
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Status</Label>
               {isUpdatingStatus ? (
@@ -175,7 +173,6 @@ const ChamadoCard = ({
                 ))}
               </div>
             )}
-            {/* Evidências */}
             {Array.isArray((c as any).evidencias) && (c as any).evidencias.length > 0 && (
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
@@ -218,7 +215,7 @@ const ListaChamados = () => {
   const [updatingStatusId, setUpdatingStatusId] = useState<string | null>(null);
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
-  const [isImporting, setIsImporting] = useState(false);
+  const [renovandoToken, setRenovandoToken] = useState(false);
   const lastSyncRef = useRef<number>(0);
   const [editForm, setEditForm] = useState({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
 
@@ -235,7 +232,6 @@ const ListaChamados = () => {
     });
   }, [chamados, filtroTexto, filtroTipo]);
 
-  // Agrupa por status para kanban
   const kanbanColunas = useMemo(() => {
     return STATUS_OPTIONS.map(status => ({
       status,
@@ -243,32 +239,25 @@ const ListaChamados = () => {
     }));
   }, [chamadosFiltrados]);
 
-  // Importa do Jira (upsert completo)
-  const handleImportarJira = useCallback(async () => {
-    setIsImporting(true);
+  const renovarToken = async () => {
+    setRenovandoToken(true);
     try {
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/atlassian-auth`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({ sync_all: true }),
+        headers: { "Content-Type": "application/json" },
       });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error ?? "Erro desconhecido");
-      await qc.invalidateQueries({ queryKey: ["chamados"] });
-      await refetch();
-      toast.success(result.mensagem ?? `${result.importados ?? 0} chamados importados!`);
-    } catch (err: any) {
-      toast.error(`Erro ao importar: ${err?.message ?? "erro desconhecido"}`);
-    } finally {
-      setIsImporting(false);
+      const { url } = await res.json();
+      if (url) {
+        window.location.href = url;
+      } else {
+        throw new Error("URL de autenticação não retornada");
+      }
+    } catch {
+      toast.error("Erro ao iniciar renovação. Tente novamente.");
+      setRenovandoToken(false);
     }
-  }, [qc, refetch]);
+  };
 
-  // Sincroniza um chamado individual e recarrega a lista
   const syncJiraIssue = useCallback(async (chamadoId: string, jiraKey: string | null, silent = false) => {
     if (!jiraKey) return;
     setSyncingId(chamadoId);
@@ -297,7 +286,6 @@ const ListaChamados = () => {
     }
   }, [qc, refetch]);
 
-  // Sincroniza todos os chamados com jira_key em sequência
   const syncAllJiraIssues = useCallback(async (silent = true) => {
     if (!chamados?.length) return;
     const comJira = chamados.filter(c => c.jira_key);
@@ -336,7 +324,6 @@ const ListaChamados = () => {
     }
   }, [chamados, qc, refetch]);
 
-  // Auto-sync a cada 5 minutos
   useEffect(() => {
     const timer = setInterval(() => syncAllJiraIssues(true), 5 * 60 * 1000);
     return () => clearInterval(timer);
@@ -446,22 +433,22 @@ const ListaChamados = () => {
               <Columns className="h-4 w-4" />
             </Button>
           </div>
-          {/* Importar do Jira */}
+          {/* Renovar token Jira */}
           <Button
             variant="outline"
             size="sm"
-            onClick={handleImportarJira}
-            disabled={isImporting || isFetching}
-            className="gap-1.5 h-8"
-            title="Importar todos os chamados do Jira"
+            onClick={renovarToken}
+            disabled={renovandoToken}
+            className="gap-1.5 h-8 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
+            title="Renovar autenticação com o Jira"
           >
-            {isImporting ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            {renovandoToken ? (
+              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
             ) : (
-              <Download className="h-3.5 w-3.5" />
+              <AlertTriangle className="h-3.5 w-3.5" />
             )}
             <span className="hidden sm:inline">
-              {isImporting ? "Importando..." : "Importar Jira"}
+              {renovandoToken ? "Renovando..." : "Renovar Jira"}
             </span>
           </Button>
           {/* Sincronizar */}
