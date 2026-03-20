@@ -29,34 +29,62 @@ const DashboardPanel = () => {
   const { data: chamados, isLoading, refetch } = useChamados();
   const qc = useQueryClient();
   const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<string | null>(null);
 
   const importarDoJira = useCallback(async () => {
     setIsImporting(true);
+    setImportProgress("Iniciando...");
+
+    let totalImportados = 0;
+    let totalAtualizados = 0;
+    let startAt = 0;
+    let pagina = 1;
+
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
-        body: JSON.stringify({ sync_all: true }),
-      });
-      const result = await res.json();
-      if (!res.ok) {
-        toast.error(`Falha na importação: ${result.error ?? "erro desconhecido"}`);
-      } else {
-        const importados = result.importados ?? 0;
-        const atualizados = result.atualizados ?? 0;
-        const msg = result.mensagem ?? `${importados} novo(s), ${atualizados} atualizado(s).`;
-        toast.success(msg);
-        await qc.invalidateQueries({ queryKey: ["chamados"] });
-        await refetch();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+      };
+
+      while (true) {
+        setImportProgress(`Importando página ${pagina}... (${totalImportados} novos, ${totalAtualizados} atualizados)`);
+
+        const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ start_at: startAt }),
+        });
+
+        const result = await res.json();
+
+        if (!res.ok) {
+          toast.error(`Erro na importação: ${result.error ?? "erro desconhecido"}`);
+          break;
+        }
+
+        totalImportados += result.importados ?? 0;
+        totalAtualizados += result.atualizados ?? 0;
+
+        if (!result.has_more) {
+          // Concluído
+          await qc.invalidateQueries({ queryKey: ["chamados"] });
+          await refetch();
+          toast.success(`Importação concluída: ${totalImportados} novo(s), ${totalAtualizados} atualizado(s).`);
+          break;
+        }
+
+        startAt = result.next_start_at;
+        pagina++;
+
+        // Pequena pausa entre páginas para não sobrecarregar
+        await new Promise(r => setTimeout(r, 300));
       }
     } catch (err: any) {
       toast.error(`Erro ao importar: ${err?.message}`);
     } finally {
       setIsImporting(false);
+      setImportProgress(null);
     }
   }, [qc, refetch]);
 
@@ -74,9 +102,7 @@ const DashboardPanel = () => {
     chamados.forEach(c => {
       if (c.modulo) porModulo[c.modulo] = (porModulo[c.modulo] ?? 0) + 1;
     });
-    const topModulos = Object.entries(porModulo)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 5);
+    const topModulos = Object.entries(porModulo).sort((a, b) => b[1] - a[1]).slice(0, 5);
 
     const porStatus: Record<string, number> = {};
     chamados.forEach(c => {
@@ -103,9 +129,7 @@ const DashboardPanel = () => {
       mes: chamados.filter(c => new Date(c.created_at) >= mes).length,
       topModulos,
       porStatus,
-      taxaConclusao: chamados.length > 0
-        ? Math.round((concluidos.length / chamados.length) * 100)
-        : 0,
+      taxaConclusao: chamados.length > 0 ? Math.round((concluidos.length / chamados.length) * 100) : 0,
     };
   }, [chamados]);
 
@@ -135,49 +159,38 @@ const DashboardPanel = () => {
   ];
 
   const statusOrder = [
-    "Aberto",
-    "Em Atendimento",
-    "Aguardando Suporte",
-    "Aguardando Solicitante",
-    "Aguardando Desenvolvimento",
-    "Em Backlog de Melhorias",
-    "Concluído",
+    "Aberto", "Em Atendimento", "Aguardando Suporte", "Aguardando Solicitante",
+    "Aguardando Desenvolvimento", "Em Backlog de Melhorias", "Concluído",
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header com botão de importar */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-foreground">Painel de Controle</h2>
           <p className="text-muted-foreground text-sm mt-1">Visão geral dos chamados do PromoBank</p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={importarDoJira}
-          disabled={isImporting}
-          className="gap-1.5 h-9"
-          title="Importar todos os chamados do Jira para o sistema"
-        >
-          {isImporting ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <Download className="h-4 w-4" />
+        <div className="flex flex-col items-end gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={importarDoJira}
+            disabled={isImporting}
+            className="gap-1.5 h-9"
+            title="Importar todos os chamados do Jira para o sistema"
+          >
+            {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {isImporting ? "Importando..." : "Importar do Jira"}
+          </Button>
+          {importProgress && (
+            <span className="text-xs text-muted-foreground">{importProgress}</span>
           )}
-          {isImporting ? "Importando..." : "Importar do Jira"}
-        </Button>
+        </div>
       </div>
 
-      {/* Cards de métricas */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {metricCards.map((card, i) => (
-          <motion.div
-            key={card.label}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.04 }}
-          >
+          <motion.div key={card.label} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.04 }}>
             <Card className="hover:shadow-md transition-shadow">
               <CardHeader className="pb-1 flex flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-xs font-medium text-muted-foreground">{card.label}</CardTitle>
@@ -193,12 +206,9 @@ const DashboardPanel = () => {
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
-        {/* Distribuição por status */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Distribuição por Status</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Distribuição por Status</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {statusOrder.map(status => {
                 const count = stats.porStatus[status] ?? 0;
@@ -210,29 +220,19 @@ const DashboardPanel = () => {
                       <span className="text-muted-foreground">{count} ({pct}%)</span>
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <motion.div
-                        className="h-full bg-primary rounded-full"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.6, delay: 0.4 }}
-                      />
+                      <motion.div className="h-full bg-primary rounded-full" initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.6, delay: 0.4 }} />
                     </div>
                   </div>
                 );
               })}
-              {stats.total === 0 && (
-                <p className="text-xs text-muted-foreground text-center py-4">Nenhum chamado ainda</p>
-              )}
+              {stats.total === 0 && <p className="text-xs text-muted-foreground text-center py-4">Nenhum chamado ainda</p>}
             </CardContent>
           </Card>
         </motion.div>
 
-        {/* Top módulos */}
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Módulos com mais Chamados</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Módulos com mais Chamados</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               {stats.topModulos.length > 0 ? stats.topModulos.map(([modulo, count], i) => {
                 const pct = stats.total > 0 ? Math.round(count / stats.total * 100) : 0;
@@ -245,30 +245,20 @@ const DashboardPanel = () => {
                       <span className="text-muted-foreground">{count} chamado{count > 1 ? "s" : ""}</span>
                     </div>
                     <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                      <motion.div
-                        className="h-full bg-primary/70 rounded-full"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${pct}%` }}
-                        transition={{ duration: 0.6, delay: 0.5 + i * 0.05 }}
-                      />
+                      <motion.div className="h-full bg-primary/70 rounded-full" initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.6, delay: 0.5 + i * 0.05 }} />
                     </div>
                   </div>
                 );
-              }) : (
-                <p className="text-xs text-muted-foreground text-center py-4">Nenhum módulo registrado ainda</p>
-              )}
+              }) : <p className="text-xs text-muted-foreground text-center py-4">Nenhum módulo registrado ainda</p>}
             </CardContent>
           </Card>
         </motion.div>
       </div>
 
-      {/* Últimos chamados */}
       {chamados && chamados.length > 0 && (
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Chamados Recentes</CardTitle>
-            </CardHeader>
+            <CardHeader className="pb-3"><CardTitle className="text-base">Chamados Recentes</CardTitle></CardHeader>
             <CardContent>
               <div className="space-y-2">
                 {chamados.slice(0, 8).map((c) => {
@@ -289,12 +279,8 @@ const DashboardPanel = () => {
                           {c.status_jira ?? "Aberto"}
                         </span>
                         {c.jira_key && (
-                          <a
-                            href={`https://datweb.atlassian.net/browse/${c.jira_key}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-primary hover:underline font-mono flex items-center gap-0.5"
-                          >
+                          <a href={`https://datweb.atlassian.net/browse/${c.jira_key}`} target="_blank" rel="noopener noreferrer"
+                            className="text-xs text-primary hover:underline font-mono flex items-center gap-0.5">
                             {c.jira_key}<ExternalLink className="h-3 w-3" />
                           </a>
                         )}
