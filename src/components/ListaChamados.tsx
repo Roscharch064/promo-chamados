@@ -216,6 +216,7 @@ const ListaChamados = () => {
   const [syncingId, setSyncingId] = useState<string | null>(null);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [renovandoToken, setRenovandoToken] = useState(false);
+  const [tokenExpirado, setTokenExpirado] = useState(false);
   const lastSyncRef = useRef<number>(0);
   const [editForm, setEditForm] = useState({ titulo: "", status_jira: "Aberto", responsavel_nome: "" });
 
@@ -238,6 +239,32 @@ const ListaChamados = () => {
       chamados: chamadosFiltrados.filter(c => (c.status_jira ?? "Aberto") === status),
     }));
   }, [chamadosFiltrados]);
+
+  // Verifica se o token Jira está expirado ou ausente
+  useEffect(() => {
+    const verificarToken = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user?.email) return;
+
+      const { data } = await supabase
+        .from("mapeamento_usuarios")
+        .select("jira_api_token, jira_token_expires_at")
+        .eq("email", session.user.email)
+        .single();
+
+      if (!data?.jira_api_token) {
+        setTokenExpirado(true);
+        return;
+      }
+      if (data.jira_token_expires_at) {
+        setTokenExpirado(new Date(data.jira_token_expires_at) <= new Date());
+        return;
+      }
+      setTokenExpirado(false);
+    };
+
+    verificarToken();
+  }, []);
 
   const renovarToken = async () => {
     setRenovandoToken(true);
@@ -433,24 +460,26 @@ const ListaChamados = () => {
               <Columns className="h-4 w-4" />
             </Button>
           </div>
-          {/* Renovar token Jira */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={renovarToken}
-            disabled={renovandoToken}
-            className="gap-1.5 h-8 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
-            title="Renovar autenticação com o Jira"
-          >
-            {renovandoToken ? (
-              <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <AlertTriangle className="h-3.5 w-3.5" />
-            )}
-            <span className="hidden sm:inline">
-              {renovandoToken ? "Renovando..." : "Renovar Jira"}
-            </span>
-          </Button>
+          {/* Renovar token Jira — só aparece quando expirado/ausente */}
+          {tokenExpirado && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={renovarToken}
+              disabled={renovandoToken}
+              className="gap-1.5 h-8 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
+              title="Token Jira expirado — clique para renovar"
+            >
+              {renovandoToken ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <AlertTriangle className="h-3.5 w-3.5" />
+              )}
+              <span className="hidden sm:inline">
+                {renovandoToken ? "Renovando..." : "Renovar Jira"}
+              </span>
+            </Button>
+          )}
           {/* Sincronizar */}
           <Button
             variant="outline"
