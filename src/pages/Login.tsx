@@ -31,7 +31,6 @@ const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isAtlassianLoading, setIsAtlassianLoading] = useState(false);
 
-  // Mostra erro vindo do callback OAuth
   useEffect(() => {
     const error = searchParams.get("error");
     const emailParam = searchParams.get("email");
@@ -61,7 +60,11 @@ const Login = () => {
   const handleAtlassianLogin = async () => {
     setIsAtlassianLoading(true);
     try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/atlassian-auth`);
+      // POST (não GET) — a edge function só aceita POST
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/atlassian-auth`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
       const { url } = await res.json();
       if (url) {
         window.location.href = url;
