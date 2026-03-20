@@ -25,6 +25,48 @@ const STATUS_COLORS: Record<string, string> = {
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
+async function importarModo(
+  mode: "ativas" | "concluidas",
+  headers: Record<string, string>,
+  onProgress: (msg: string) => void
+): Promise<{ importados: number; atualizados: number }> {
+  let startAt = 0;
+  let pagina = 1;
+  let totalImportados = 0;
+  let totalAtualizados = 0;
+
+  while (true) {
+    onProgress(
+      mode === "ativas"
+        ? `Ativas — pág. ${pagina} (${totalImportados} novas)`
+        : `Concluídas recentes — pág. ${pagina} (${totalImportados} novas)`
+    );
+
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ start_at: startAt, mode }),
+    });
+
+    const result = await res.json();
+
+    if (!res.ok) {
+      throw new Error(result.error ?? "Erro desconhecido");
+    }
+
+    totalImportados += result.importados ?? 0;
+    totalAtualizados += result.atualizados ?? 0;
+
+    if (!result.has_more) break;
+
+    startAt = result.next_start_at;
+    pagina++;
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  return { importados: totalImportados, atualizados: totalAtualizados };
+}
+
 const DashboardPanel = () => {
   const { data: chamados, isLoading, refetch } = useChamados();
   const qc = useQueryClient();
@@ -33,12 +75,6 @@ const DashboardPanel = () => {
 
   const importarDoJira = useCallback(async () => {
     setIsImporting(true);
-    setImportProgress("Iniciando...");
-
-    let totalImportados = 0;
-    let totalAtualizados = 0;
-    let startAt = 0;
-    let pagina = 1;
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -47,39 +83,18 @@ const DashboardPanel = () => {
         ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
       };
 
-      while (true) {
-        setImportProgress(`Importando página ${pagina}... (${totalImportados} novos, ${totalAtualizados} atualizados)`);
+      // 1. Importa todas as issues ativas (qualquer status exceto Concluído)
+      const ativas = await importarModo("ativas", headers, setImportProgress);
 
-        const res = await fetch(`${SUPABASE_URL}/functions/v1/import-jira-issues`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ start_at: startAt }),
-        });
+      // 2. Importa concluídas dos últimos 90 dias
+      const concluidas = await importarModo("concluidas", headers, setImportProgress);
 
-        const result = await res.json();
+      await qc.invalidateQueries({ queryKey: ["chamados"] });
+      await refetch();
 
-        if (!res.ok) {
-          toast.error(`Erro na importação: ${result.error ?? "erro desconhecido"}`);
-          break;
-        }
-
-        totalImportados += result.importados ?? 0;
-        totalAtualizados += result.atualizados ?? 0;
-
-        if (!result.has_more) {
-          // Concluído
-          await qc.invalidateQueries({ queryKey: ["chamados"] });
-          await refetch();
-          toast.success(`Importação concluída: ${totalImportados} novo(s), ${totalAtualizados} atualizado(s).`);
-          break;
-        }
-
-        startAt = result.next_start_at;
-        pagina++;
-
-        // Pequena pausa entre páginas para não sobrecarregar
-        await new Promise(r => setTimeout(r, 300));
-      }
+      const totalNovos = ativas.importados + concluidas.importados;
+      const totalAtualizados = ativas.atualizados + concluidas.atualizados;
+      toast.success(`Importação concluída: ${totalNovos} novo(s), ${totalAtualizados} atualizado(s).`);
     } catch (err: any) {
       toast.error(`Erro ao importar: ${err?.message}`);
     } finally {
@@ -177,7 +192,7 @@ const DashboardPanel = () => {
             onClick={importarDoJira}
             disabled={isImporting}
             className="gap-1.5 h-9"
-            title="Importar todos os chamados do Jira para o sistema"
+            title="Importa todas as ativas + concluídas dos últimos 90 dias"
           >
             {isImporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
             {isImporting ? "Importando..." : "Importar do Jira"}
