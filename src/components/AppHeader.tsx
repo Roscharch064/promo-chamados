@@ -1,18 +1,11 @@
-import { Moon, Sun, LogOut, RefreshCw, AlertTriangle } from "lucide-react";
+import { Moon, Sun, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTheme } from "@/components/ThemeProvider";
 import { useAuth } from "@/hooks/useAuth";
-import { supabase } from "@/integrations/supabase/client";
-import { useState, useEffect } from "react";
-import { toast } from "sonner";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
 
 const AppHeader = () => {
   const { theme, toggleTheme } = useTheme();
   const { signOut, session, tipoUsuario } = useAuth();
-  const [tokenExpirado, setTokenExpirado] = useState(false);
-  const [renovando, setRenovando] = useState(false);
 
   const nomeExibido =
     session?.user?.user_metadata?.nome ||
@@ -26,60 +19,6 @@ const AppHeader = () => {
     franqueado: "Franqueado",
   };
 
-  // Verifica se o token Jira está expirado ou ausente
-  useEffect(() => {
-    if (!session?.user?.email) return;
-
-    const verificarToken = async () => {
-      const { data } = await supabase
-        .from("mapeamento_usuarios")
-        .select("jira_api_token, jira_token_expires_at")
-        .eq("email", session.user.email)
-        .single();
-
-      // Sem token nenhum → mostra botão
-      if (!data?.jira_api_token) {
-        setTokenExpirado(true);
-        return;
-      }
-
-      // Com data de expiração → verifica se passou
-      if (data.jira_token_expires_at) {
-        const expira = new Date(data.jira_token_expires_at);
-        const agora = new Date();
-        setTokenExpirado(expira <= agora);
-        return;
-      }
-
-      // Token existe mas sem data de expiração → considera válido
-      setTokenExpirado(false);
-    };
-
-    verificarToken();
-    // Verifica a cada 5 minutos
-    const interval = setInterval(verificarToken, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [session?.user?.email]);
-
-  const renovarToken = async () => {
-    setRenovando(true);
-    try {
-      const res = await fetch(`${SUPABASE_URL}/functions/v1/atlassian-auth`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-      const { url } = await res.json();
-      if (url) {
-        window.location.href = url;
-      } else {
-        throw new Error("URL de autenticação não retornada");
-      }
-    } catch {
-      toast.error("Erro ao iniciar renovação. Tente novamente.");
-      setRenovando(false);
-    }
-  };
-
   return (
     <header className="border-b border-border bg-card">
       <div className="container mx-auto px-4 py-3 max-w-6xl flex items-center justify-between">
@@ -88,27 +27,6 @@ const AppHeader = () => {
           <p className="text-xs text-muted-foreground">Sistema de Chamados</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Aviso de token expirado ou ausente */}
-          {tokenExpirado && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={renovarToken}
-              disabled={renovando}
-              className="gap-1.5 h-8 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
-              title="Token Jira expirado ou ausente — clique para autenticar"
-            >
-              {renovando ? (
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <AlertTriangle className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                {renovando ? "Renovando..." : "Renovar Jira"}
-              </span>
-            </Button>
-          )}
-
           {session && (
             <div className="hidden sm:flex flex-col items-end">
               <span className="text-xs font-medium text-foreground capitalize">
