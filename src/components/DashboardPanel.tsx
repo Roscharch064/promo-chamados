@@ -40,14 +40,16 @@ const DashboardPanel = () => {
           "Content-Type": "application/json",
           ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ sync_all: true }),
       });
       const result = await res.json();
       if (!res.ok) {
         toast.error(`Falha na importação: ${result.error ?? "erro desconhecido"}`);
       } else {
-        const total = result.imported ?? result.total ?? result.count ?? "?";
-        toast.success(`${total} chamado(s) importados do Jira!`);
+        const importados = result.importados ?? 0;
+        const atualizados = result.atualizados ?? 0;
+        const msg = result.mensagem ?? `${importados} novo(s), ${atualizados} atualizado(s).`;
+        toast.success(msg);
         await qc.invalidateQueries({ queryKey: ["chamados"] });
         await refetch();
       }
