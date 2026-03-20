@@ -26,7 +26,7 @@ const AppHeader = () => {
     franqueado: "Franqueado",
   };
 
-  // Verifica se o token Jira está expirado
+  // Verifica se o token Jira está expirado ou ausente
   useEffect(() => {
     if (!session?.user?.email) return;
 
@@ -37,16 +37,22 @@ const AppHeader = () => {
         .eq("email", session.user.email)
         .single();
 
+      // Sem token nenhum → mostra botão
       if (!data?.jira_api_token) {
         setTokenExpirado(true);
         return;
       }
 
+      // Com data de expiração → verifica se passou
       if (data.jira_token_expires_at) {
         const expira = new Date(data.jira_token_expires_at);
         const agora = new Date();
         setTokenExpirado(expira <= agora);
+        return;
       }
+
+      // Token existe mas sem data de expiração → considera válido
+      setTokenExpirado(false);
     };
 
     verificarToken();
@@ -65,6 +71,8 @@ const AppHeader = () => {
       const { url } = await res.json();
       if (url) {
         window.location.href = url;
+      } else {
+        throw new Error("URL de autenticação não retornada");
       }
     } catch {
       toast.error("Erro ao iniciar renovação. Tente novamente.");
@@ -80,7 +88,7 @@ const AppHeader = () => {
           <p className="text-xs text-muted-foreground">Sistema de Chamados</p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Aviso de token expirado */}
+          {/* Aviso de token expirado ou ausente */}
           {tokenExpirado && (
             <Button
               variant="outline"
@@ -88,7 +96,7 @@ const AppHeader = () => {
               onClick={renovarToken}
               disabled={renovando}
               className="gap-1.5 h-8 text-xs border-amber-500 text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
-              title="Token Jira expirado — clique para renovar"
+              title="Token Jira expirado ou ausente — clique para autenticar"
             >
               {renovando ? (
                 <RefreshCw className="h-3.5 w-3.5 animate-spin" />
